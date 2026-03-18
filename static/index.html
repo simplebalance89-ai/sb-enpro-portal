@@ -824,6 +824,25 @@
             .qt-step { font-size: 10px; }
             .action-grid { grid-template-columns: 1fr 1fr; }
         }
+        /* ── Card Action Buttons ── */
+        .card-actions {
+            display: flex;
+            border-top: 1px solid var(--border);
+        }
+        .card-action-btn {
+            flex: 1;
+            padding: 8px;
+            background: var(--bg);
+            border: none;
+            border-right: 1px solid var(--border);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--navy);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .card-action-btn:last-child { border-right: none; }
+        .card-action-btn:hover { background: var(--navy); color: white; }
     </style>
 </head>
 <body>
@@ -858,6 +877,9 @@
     </button>
     <button class="qa-btn" onclick="showModal('pregame')">
         <span class="qa-icon">&#127919;</span> Pregame
+    </button>
+    <button class="qa-btn" onclick="sendMessage('demo')">
+        <span class="qa-icon">&#127916;</span> Demo
     </button>
     <button class="qa-btn" onclick="sendMessage('help')">
         <span class="qa-icon">&#10067;</span> Help

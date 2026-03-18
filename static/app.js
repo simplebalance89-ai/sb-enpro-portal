@@ -475,6 +475,12 @@
 
         html += '</div>'; // body
 
+        // Card actions — print/copy
+        html += '<div class="card-actions">';
+        html += '<button class="card-action-btn" onclick="printCard(this)">&#128424; Print</button>';
+        html += '<button class="card-action-btn" onclick="copyCard(this)">&#128203; Copy</button>';
+        html += '</div>';
+
         // Footer — click to copy, no email app
         html += '<div class="product-footer">';
         html += '<strong>EnPro Inc</strong> &mdash; ';
@@ -1140,6 +1146,58 @@
             document.body.appendChild(toast);
             setTimeout(function () { toast.remove(); }, 2000);
         });
+    };
+
+    // ── Print / Copy product card ──
+    window.printCard = function (btn) {
+        var card = btn.closest('.product-card');
+        if (!card) return;
+        var printWin = window.open('', '_blank', 'width=500,height=600');
+        printWin.document.write('<html><head><title>EnPro Product</title>');
+        printWin.document.write('<style>body{font-family:system-ui,sans-serif;padding:20px;color:#333;}');
+        printWin.document.write('.product-card-header{background:#003366;color:white;padding:12px 16px;font-weight:700;font-size:16px;}');
+        printWin.document.write('.product-card-body{padding:14px 16px;}.product-field{display:flex;padding:6px 0;border-bottom:1px solid #eee;font-size:13px;}');
+        printWin.document.write('.product-field-label{font-weight:600;color:#666;min-width:130px;}.stock-section{margin-top:10px;padding-top:10px;border-top:2px solid #f5f5f5;}');
+        printWin.document.write('.stock-title{font-weight:600;font-size:13px;margin-bottom:6px;}.stock-row{display:flex;justify-content:space-between;padding:4px 8px;font-size:13px;}');
+        printWin.document.write('.product-price{margin-top:10px;padding:10px;background:#f5f5f5;border-radius:6px;font-weight:600;font-size:14px;}');
+        printWin.document.write('.product-footer{padding:10px 16px;background:#f5f5f5;font-size:11px;text-align:center;border-top:1px solid #ddd;margin-top:10px;}');
+        printWin.document.write('.card-actions{display:none;}.stock-qty{font-weight:700;}');
+        printWin.document.write('</style></head><body>');
+        printWin.document.write(card.outerHTML);
+        printWin.document.write('<div style="margin-top:20px;text-align:center;font-size:11px;color:#999;">EnPro Inc. | service@enproinc.com | 1 (800) 323-2416</div>');
+        printWin.document.write('</body></html>');
+        printWin.document.close();
+        printWin.print();
+    };
+
+    window.copyCard = function (btn) {
+        var card = btn.closest('.product-card');
+        if (!card) return;
+        // Extract text content from card, formatted cleanly
+        var header = card.querySelector('.product-card-header');
+        var fields = card.querySelectorAll('.product-field');
+        var price = card.querySelector('.product-price');
+        var stockRows = card.querySelectorAll('.stock-row');
+
+        var text = (header ? header.textContent.trim() : '') + '\n';
+        text += '─'.repeat(40) + '\n';
+        fields.forEach(function (f) {
+            var label = f.querySelector('.product-field-label');
+            var value = f.querySelector('.product-field-value');
+            if (label && value) {
+                text += label.textContent.trim() + ': ' + value.textContent.trim() + '\n';
+            }
+        });
+        if (price) text += 'Price: ' + price.textContent.trim() + '\n';
+        if (stockRows.length > 0) {
+            text += 'Stock: ';
+            stockRows.forEach(function (r) { text += r.textContent.trim().replace(/\s+/g, ' ') + ' | '; });
+            text = text.slice(0, -3) + '\n';
+        }
+        text += '─'.repeat(40) + '\n';
+        text += 'EnPro Inc. | service@enproinc.com | 1 (800) 323-2416\n';
+
+        copyToClipboard(text, btn);
     };
 
     // ── Expose for inline onclick ──

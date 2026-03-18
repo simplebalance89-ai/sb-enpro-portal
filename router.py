@@ -516,28 +516,49 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
         result = search_products(df, clean_msg, max_results=10)
         products = result.get("results", [])
         if len(products) >= 2:
-            lines = [f"Comparison of {len(products)} products [V25 FILTERS]:\n"]
-            for idx, p in enumerate(products, 1):
-                pn = p.get("Part_Number", "Unknown")
-                lines.append(f"### {idx}. {pn}")
-                n = 1
-                for key in ["Description", "Micron", "Media", "Max_Temp_F", "Max_PSI", "Price", "Final_Manufacturer"]:
-                    if key in p:
-                        lines.append(f"   {n}. **{key.replace('_', ' ')}:** {p[key]}")
-                        n += 1
-                stock = p.get("Stock", {})
-                if isinstance(stock, dict) and "status" not in stock:
-                    stock_str = ", ".join(f"{loc}: {qty}" for loc, qty in stock.items())
-                    lines.append(f"   {n}. **Stock:** {stock_str}")
-                lines.append("")
+            # Build side-by-side comparison table
+            spec_keys = ["Description", "Product_Type", "Final_Manufacturer", "Micron", "Media", "Max_Temp_F", "Max_PSI", "Flow_Rate", "Efficiency", "Price"]
+            spec_labels = ["Description", "Product Type", "Manufacturer", "Micron", "Media", "Max Temp (F)", "Max PSI", "Flow Rate", "Efficiency", "Price"]
+
+            lines = [f"**Side-by-Side Comparison** [V25 FILTERS]\n"]
+
+            # Header row
+            pn_header = " | ".join(f"**{p.get('Part_Number', '?')}**" for p in products[:5])
+            lines.append(f"| Spec | {pn_header} |")
+            lines.append("|" + "---|" * (len(products[:5]) + 1))
+
+            # Spec rows
+            for key, label in zip(spec_keys, spec_labels):
+                vals = []
+                for p in products[:5]:
+                    v = p.get(key, "—")
+                    if v == "" or v is None:
+                        v = "—"
+                    vals.append(str(v))
+                lines.append(f"| {label} | {' | '.join(vals)} |")
+
+            # Stock row
+            stock_vals = []
+            for p in products[:5]:
+                total = p.get("Total_Stock", 0)
+                stock_vals.append(f"{total} units" if total > 0 else "Out of stock")
+            lines.append(f"| Stock | {' | '.join(stock_vals)} |")
+
             return {
                 "response": "\n".join(lines),
+                "intent": intent,
+                "cost": "$0",
+                "products": products[:5],
+            }
+        elif len(products) == 1:
+            return {
+                "response": f"Only found 1 product for that search. Need at least 2 to compare.\n\n1. **{products[0].get('Part_Number', 'Unknown')}** — {products[0].get('Description', '')}",
                 "intent": intent,
                 "cost": "$0",
                 "products": products,
             }
         return {
-            "response": "I need at least 2 products to compare. Try something like: 'compare EPE-10-5 vs EPE-10-10'",
+            "response": "I need at least 2 products to compare. Try something like: 'compare CLR130 vs CLR140'",
             "intent": intent,
             "cost": "$0",
         }
