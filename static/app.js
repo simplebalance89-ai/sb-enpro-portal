@@ -183,11 +183,16 @@
         }
 
         // Handle different response shapes
-        if (data.products && Array.isArray(data.products)) {
-            if (data.text) appendMessage('bot', formatMarkdown(data.text));
+        if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+            if (data.text || data.response) appendMessage('bot', formatMarkdown(data.text || data.response));
             data.products.forEach(function (p) {
                 appendCard(renderProductCard(p));
-                appendFollowUps(p.part_number || '');
+                appendFollowUps(p.Part_Number || p.part_number || '');
+            });
+        } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+            data.results.forEach(function (p) {
+                appendCard(renderProductCard(p));
+                appendFollowUps(p.Part_Number || p.part_number || '');
             });
         } else if (data.chemical) {
             appendCard(renderChemicalCard(data.chemical));
@@ -218,27 +223,43 @@
 
     // ── Render product card ──
     window.renderProductCard = function (p) {
+        // Handle both camelCase and PascalCase/snake_case column names
+        var pn = p.Part_Number || p.part_number || 'Product';
+        var desc = p.Description || p.description || '';
+        var ext = p.Extended_Description || p.extended_description || '';
+        var ptype = p.Product_Type || p.product_type || '';
+        var mfg = p.Final_Manufacturer || p.Manufacturer || p.manufacturer || '';
+        var micron = p.Micron || p.micron || '';
+        var media = p.Media || p.media || '';
+        var tempF = p.Max_Temp_F || p.temp_rating || '';
+        var psi = p.Max_PSI || p.psi_rating || '';
+        var flow = p.Flow_Rate || p.flow_rate || '';
+        var eff = p.Efficiency || p.efficiency || '';
+        var price = p.Price || p.price || p.Last_Sell_Price || '';
+        var stock = p.Stock || p.stock || {};
+        var totalStock = p.Total_Stock || p.total_stock || 0;
+
         var html = '<div class="product-card">';
-        html += '<div class="product-card-header">' + esc(p.part_number || 'Product') + '</div>';
+        html += '<div class="product-card-header">' + esc(String(pn)) + '</div>';
         html += '<div class="product-card-body">';
 
         var fields = [
-            ['Description', p.description],
-            ['Extended Desc', p.extended_description],
-            ['Product Type', p.product_type],
-            ['Manufacturer', p.manufacturer]
+            ['Description', desc],
+            ['Extended Desc', ext],
+            ['Product Type', ptype],
+            ['Manufacturer', mfg]
         ];
 
         // Specs line
         var specs = [];
-        if (p.micron) specs.push(p.micron + ' Micron');
-        if (p.media) specs.push(p.media);
-        if (p.temp_rating) specs.push(p.temp_rating);
-        if (p.psi_rating) specs.push(p.psi_rating + ' PSI');
-        if (p.flow_rate) specs.push(p.flow_rate);
+        if (micron && micron !== '0' && micron !== '0.0') specs.push(micron + ' Micron');
+        if (media) specs.push(media);
+        if (tempF && tempF !== '0' && tempF !== '0.0') specs.push(tempF + '°F');
+        if (psi && psi !== '0' && psi !== '0.0') specs.push(psi + ' PSI');
+        if (flow) specs.push(flow);
         if (specs.length) fields.push(['Specs', specs.join(' | ')]);
 
-        if (p.efficiency) fields.push(['Efficiency', p.efficiency]);
+        if (eff) fields.push(['Efficiency', eff]);
 
         fields.forEach(function (f) {
             if (f[1]) {
@@ -250,37 +271,50 @@
         });
 
         // Stock
-        if (p.stock && typeof p.stock === 'object') {
+        if (stock && typeof stock === 'object' && Object.keys(stock).length > 0) {
             html += '<div class="stock-section">';
             html += '<div class="stock-title">Inventory</div>';
-            var locations = Object.keys(p.stock);
+            var locations = Object.keys(stock);
             var hasStock = false;
             locations.forEach(function (loc) {
-                var qty = p.stock[loc];
+                if (loc === 'status') {
+                    html += '<div class="stock-row"><span style="color: var(--stock-red); font-weight: 600;">' + esc(String(stock[loc])) + '</span></div>';
+                    return;
+                }
+                var qty = parseInt(stock[loc]) || 0;
                 if (qty > 0) {
                     hasStock = true;
-                    var cls = qty >= 10 ? 'in-stock' : 'low-stock';
                     var badge = qty >= 10 ? 'green' : qty >= 3 ? 'orange' : 'red';
-                    html += '<div class="stock-row ' + cls + '">';
+                    html += '<div class="stock-row">';
                     html += '<span>' + esc(loc) + '</span>';
                     html += '<span class="stock-qty ' + badge + '">' + qty + ' in stock</span>';
                     html += '</div>';
                 }
             });
-            if (!hasStock) {
+            if (!hasStock && !stock.status) {
                 html += '<div class="stock-row"><span style="color: var(--stock-red); font-weight: 600;">Out of stock at all locations</span></div>';
             }
             html += '</div>';
+        } else if (totalStock > 0) {
+            html += '<div class="stock-section"><div class="stock-title">Inventory</div>';
+            html += '<div class="stock-row"><span class="stock-qty green">' + totalStock + ' total in stock</span></div></div>';
         }
 
         // Price
-        if (p.price !== undefined && p.price !== null) {
-            var priceVal = parseFloat(p.price);
-            if (priceVal > 0) {
-                html += '<div class="product-price has-price">$' + priceVal.toFixed(2) + '</div>';
+        var priceStr = String(price);
+        if (priceStr && priceStr !== '' && priceStr !== '0' && priceStr !== '0.0' && priceStr !== '$0.00') {
+            if (priceStr.startsWith('$') || priceStr.startsWith('Contact')) {
+                html += '<div class="product-price ' + (priceStr.startsWith('$') ? 'has-price' : 'no-price') + '">' + esc(priceStr) + '</div>';
             } else {
-                html += '<div class="product-price no-price">Contact EnPro for pricing</div>';
+                var priceVal = parseFloat(priceStr);
+                if (priceVal > 0) {
+                    html += '<div class="product-price has-price">$' + priceVal.toFixed(2) + '</div>';
+                } else {
+                    html += '<div class="product-price no-price">Contact EnPro for pricing</div>';
+                }
             }
+        } else {
+            html += '<div class="product-price no-price">Contact EnPro for pricing</div>';
         }
 
         html += '</div>'; // body
