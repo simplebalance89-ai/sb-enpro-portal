@@ -126,7 +126,8 @@
                 handleResponse(data);
             } else {
                 // Starts-with or contains — use suggest to get matches, then show as search results
-                var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(partNumber) + '&mode=' + mode);
+                var stockVal = document.getElementById('stockFilter') ? document.getElementById('stockFilter').value : 'all';
+                var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(partNumber) + '&mode=' + mode + '&in_stock=' + stockVal);
                 var data = await res.json();
                 var suggestions = data.suggestions || [];
                 if (suggestions.length === 0) {
@@ -395,7 +396,7 @@
         var totalStock = p.Total_Stock || p.total_stock || 0;
 
         var html = '<div class="product-card">';
-        html += '<div class="product-card-header">' + esc(String(pn)) + '</div>';
+        html += '<div class="product-card-header">Part Number: ' + esc(String(pn)) + '</div>';
         html += '<div class="product-card-body">';
 
         var fields = [
@@ -898,7 +899,8 @@
 
         try {
             var mode = lookupMode.value || 'exact';
-            var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(query) + '&mode=' + mode);
+            var stockFlt = document.getElementById('stockFilter') ? document.getElementById('stockFilter').value : 'all';
+            var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(query) + '&mode=' + mode + '&in_stock=' + stockFlt);
             var data = await res.json();
             suggestItems = data.suggestions || [];
 
