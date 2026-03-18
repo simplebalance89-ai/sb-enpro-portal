@@ -106,6 +106,7 @@
 
         clearWelcome();
         appendMessage('user', text);
+        parseAndUpdateContext(text);
         setLoading(true);
         var queryStart = Date.now();
 
@@ -257,6 +258,12 @@
             return;
         }
 
+        // Track compare intent for context card
+        if (data.intent === 'compare' || (data.table && data.table.title && data.table.title.toLowerCase().includes('compare'))) {
+            sessionContext.compared = true;
+            renderContextCard();
+        }
+
         // Chemical intent — parse GPT text into structured card
         if (data.intent === 'chemical' && data.response && !data.chemical) {
             var parsed = parseChemicalResponse(data.response);
@@ -354,11 +361,15 @@
             '<div class="welcome-icon">&#9881;</div>' +
             '<h2>Welcome to Filtration Mastermind</h2>' +
             '<p>Your AI-powered filtration product assistant.<br>' +
-            'Ask about parts, chemicals, specs, or use the quick actions above.</p>' +
+            '72,000+ products. Real-time inventory. John\'s 30 years of expertise.</p>' +
+            '<button onclick="startSimulate()" style="margin-top:20px; padding:16px 36px; background:linear-gradient(135deg, #003366, #0066CC); color:white; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; box-shadow:0 4px 16px rgba(0,102,204,0.3); font-family:inherit;">&#9654;&nbsp; See What AI Can Do</button>' +
+            '<p style="margin-top:10px; font-size:12px; color:var(--text-light);">14-step live demo with real data</p>' +
             '</div>';
         // Reset state
         searchCount = 0;
         lastFollowUps = [];
+        // Clear context lane
+        if (typeof window.clearContext === 'function') window.clearContext();
         // New session ID
         sessionId = crypto.randomUUID ? crypto.randomUUID() : uuidFallback();
         localStorage.setItem(SESSION_KEY, sessionId);
@@ -529,6 +540,7 @@
         html += '<button class="card-action-btn" onclick="printCard(this)">&#128424; Print</button>';
         html += '<button class="card-action-btn" onclick="copyCard(this)">&#128203; Copy</button>';
         html += '<button class="card-action-btn" onclick="reportCard(this)" style="color:var(--stock-red);">&#9873; Report</button>';
+        html += '<button class="card-action-btn" onclick="pinCardProduct(this)">&#128204; Pin</button>';
         html += '</div>';
 
         // Footer — click to copy, no email app
@@ -2237,6 +2249,224 @@
         sendMessage(parts.join(' '));
     };
 
+    // ── Two-Lane Workbench — Context Parser ──
+    var sessionContext = {
+        fluid: null,
+        micron: null,
+        temperature: null,
+        flowRate: null,
+        pressure: null,
+        industry: null,
+        chemical: null,
+        pinnedPart: null,
+        checkedChemical: false,
+        compared: false
+    };
+
+    function parseAndUpdateContext(text) {
+        var lower = text.toLowerCase();
+
+        // Fluid detection
+        var fluids = ['hydraulic oil', 'lube oil', 'sulfuric acid', 'hydrochloric acid',
+            'acetic acid', 'acetone', 'water', 'glycol', 'amine', 'diesel', 'gasoline',
+            'steam', 'compressed air', 'natural gas', 'crude oil', 'kerosene',
+            'methanol', 'ethanol', 'caustic', 'bleach', 'brine'];
+        for (var i = 0; i < fluids.length; i++) {
+            if (lower.includes(fluids[i])) {
+                sessionContext.fluid = fluids[i].replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+                break;
+            }
+        }
+
+        // Micron
+        var micronMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:micron|μm|um)\b/);
+        if (micronMatch) sessionContext.micron = micronMatch[1] + ' \u03BCm';
+
+        // Temperature
+        var tempMatch = lower.match(/(\d{2,})\s*°?\s*(?:f|fahrenheit)/);
+        if (tempMatch) sessionContext.temperature = tempMatch[1] + '\u00B0F';
+        var tempC = lower.match(/(\d{2,})\s*°?\s*(?:c|celsius)/);
+        if (tempC) sessionContext.temperature = tempC[1] + '\u00B0C';
+
+        // Flow rate
+        var flowMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:gpm|lpm)/i);
+        if (flowMatch) sessionContext.flowRate = flowMatch[0].toUpperCase();
+
+        // Pressure
+        var psiMatch = lower.match(/(\d+)\s*(?:psi|bar)\b/i);
+        if (psiMatch) sessionContext.pressure = psiMatch[0].toUpperCase();
+
+        // Industry
+        var industries = {
+            'refinery': 'Refinery', 'pharmaceutical': 'Pharmaceutical', 'power plant': 'Power Plant',
+            'semiconductor': 'Semiconductor', 'brewery': 'Brewery', 'beverage': 'Beverage',
+            'dairy': 'Dairy', 'municipal': 'Municipal Water', 'chemical': 'Chemical Processing',
+            'mining': 'Mining', 'wastewater': 'Wastewater', 'petrochemical': 'Petrochemical',
+            'food': 'Food & Beverage', 'hydraulic': 'Hydraulic Systems', 'paint': 'Paint & Coatings'
+        };
+        for (var key in industries) {
+            if (lower.includes(key)) {
+                sessionContext.industry = industries[key];
+                break;
+            }
+        }
+
+        // Chemical (if asking about chemical compatibility)
+        if (lower.includes('chemical') || lower.includes('compatibility')) {
+            var chemNames = ['sulfuric acid', 'hydrochloric acid', 'acetone', 'methanol', 'ethanol',
+                'caustic soda', 'bleach', 'ammonia', 'nitric acid', 'phosphoric acid', 'acetic acid',
+                'toluene', 'xylene', 'mek', 'sodium hydroxide'];
+            for (var c = 0; c < chemNames.length; c++) {
+                if (lower.includes(chemNames[c])) {
+                    sessionContext.chemical = chemNames[c].replace(/\b\w/g, function(ch) { return ch.toUpperCase(); });
+                    sessionContext.checkedChemical = true;
+                    break;
+                }
+            }
+        }
+
+        renderContextCard();
+    }
+
+    function renderContextCard() {
+        var fields = [
+            { id: 'ctxFluid', val: sessionContext.fluid },
+            { id: 'ctxMicron', val: sessionContext.micron },
+            { id: 'ctxTemp', val: sessionContext.temperature },
+            { id: 'ctxFlow', val: sessionContext.flowRate },
+            { id: 'ctxPSI', val: sessionContext.pressure },
+            { id: 'ctxIndustry', val: sessionContext.industry },
+            { id: 'ctxChemical', val: sessionContext.chemical },
+        ];
+
+        var filledCount = 0;
+        fields.forEach(function (f) {
+            var el = document.getElementById(f.id);
+            if (!el) return;
+            var valEl = el.querySelector('.ctx-value');
+            if (f.val) {
+                valEl.textContent = f.val;
+                valEl.className = 'ctx-value ctx-filled';
+                if (f.id !== 'ctxChemical') filledCount++;
+            } else {
+                valEl.textContent = f.id === 'ctxChemical' ? '\u2014' : '?';
+                valEl.className = 'ctx-value ctx-empty';
+            }
+        });
+
+        // Update spec count
+        var countEl = document.getElementById('ctxSpecCount');
+        if (countEl) countEl.textContent = filledCount + '/6';
+
+        // Update readiness steps
+        var specStep = document.getElementById('ctxStepSpecs');
+        if (specStep) {
+            if (filledCount >= 3) {
+                specStep.classList.add('done');
+                specStep.querySelector('.ctx-check').innerHTML = '&#10003;';
+            } else {
+                specStep.classList.remove('done');
+                specStep.querySelector('.ctx-check').innerHTML = '&#9675;';
+            }
+        }
+
+        var prodStep = document.getElementById('ctxStepProduct');
+        if (prodStep) {
+            if (sessionContext.pinnedPart) {
+                prodStep.classList.add('done');
+                prodStep.querySelector('.ctx-check').innerHTML = '&#10003;';
+            } else {
+                prodStep.classList.remove('done');
+                prodStep.querySelector('.ctx-check').innerHTML = '&#9675;';
+            }
+        }
+
+        var chemStep = document.getElementById('ctxStepChemical');
+        if (chemStep) {
+            if (sessionContext.checkedChemical) {
+                chemStep.classList.add('done');
+                chemStep.querySelector('.ctx-check').innerHTML = '&#10003;';
+            } else {
+                chemStep.classList.remove('done');
+                chemStep.querySelector('.ctx-check').innerHTML = '&#9675;';
+            }
+        }
+
+        var compStep = document.getElementById('ctxStepCompare');
+        if (compStep) {
+            if (sessionContext.compared) {
+                compStep.classList.add('done');
+                compStep.querySelector('.ctx-check').innerHTML = '&#10003;';
+            } else {
+                compStep.classList.remove('done');
+                compStep.querySelector('.ctx-check').innerHTML = '&#9675;';
+            }
+        }
+
+        // Auto-expand lane 1 if it was collapsed and we have context
+        if (filledCount > 0) {
+            var lane1 = document.getElementById('lane1');
+            if (lane1 && lane1.classList.contains('collapsed')) {
+                lane1.classList.remove('collapsed');
+            }
+        }
+    }
+
+    window.pinProduct = function (productData) {
+        sessionContext.pinnedPart = productData;
+        var el = document.getElementById('pinnedProduct');
+        if (el && typeof window.renderProductCard === 'function') {
+            el.innerHTML = '<div style="font-size:11px; text-transform:uppercase; color:var(--text-light); font-weight:700; margin-bottom:6px;">Pinned Product</div>' + window.renderProductCard(productData);
+        }
+        renderContextCard();
+    };
+
+    window.clearContext = function () {
+        sessionContext = {
+            fluid: null, micron: null, temperature: null, flowRate: null,
+            pressure: null, industry: null, chemical: null, pinnedPart: null,
+            checkedChemical: false, compared: false
+        };
+        var el = document.getElementById('pinnedProduct');
+        if (el) el.innerHTML = '';
+        renderContextCard();
+    };
+
+    window.toggleLane1 = function () {
+        var lane1 = document.getElementById('lane1');
+        var btn = document.getElementById('lane1Toggle');
+        if (lane1) {
+            lane1.classList.toggle('collapsed');
+            if (btn) btn.innerHTML = lane1.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
+        }
+    };
+
+    window.pinCardProduct = function(btn) {
+        var card = btn.closest('.product-card');
+        if (!card) return;
+        var header = card.querySelector('.product-card-header');
+        var pn = header ? header.textContent.replace('Part Number: ', '').trim() : '';
+        // Extract fields from card DOM
+        var fields = card.querySelectorAll('.product-field');
+        var data = { Part_Number: pn };
+        fields.forEach(function(f) {
+            var label = f.querySelector('.product-field-label');
+            var value = f.querySelector('.product-field-value');
+            if (label && value) {
+                var key = label.textContent.trim();
+                if (key === 'Manufacturer') data.Final_Manufacturer = value.textContent.trim();
+                if (key === 'Description') data.Description = value.textContent.trim();
+                if (key === 'Product Type') data.Product_Type = value.textContent.trim();
+            }
+        });
+        var price = card.querySelector('.product-price');
+        if (price) data.Price = price.textContent.trim();
+        pinProduct(data);
+        btn.textContent = '\u2713 Pinned';
+        btn.style.color = 'var(--stock-green)';
+        btn.style.pointerEvents = 'none';
+    };
+
     // ── Voice Agent (Speech-to-Text + Text-to-Speech) ──
     var micBtn = document.getElementById('micBtn');
     var recognition = null;
@@ -2369,18 +2599,32 @@
     var SIM_SCENARIOS = [
         { label: 'Part Lookup', query: '2004355', pause: 6000,
           narration: 'Look up any part by number. See specs, stock, and pricing instantly.' },
+        { label: 'Another Part', query: 'CMBF1-30NN', pause: 6000,
+          narration: 'Every part in the P21 system — 72,000+ products searchable in real time.' },
         { label: 'Chemical Compatibility', query: 'chemical compatibility of sulfuric acid', pause: 8000,
           narration: 'Check material ratings for any chemical. A/B/C/D scale with recommendations.' },
+        { label: 'Another Chemical', query: 'chemical compatibility of acetone', pause: 8000,
+          narration: 'Instant compatibility checks — PTFE, Viton, EPDM, 316SS and more.' },
         { label: 'Pre-Call Prep', query: 'pregame pharmaceutical', pause: 8000,
           narration: 'Prepare for customer calls by industry. Key concerns, products, and opening questions.' },
+        { label: 'Brewery Prep', query: 'pregame brewery', pause: 8000,
+          narration: 'Industry-specific expertise — FDA compliance, 3-A sanitary, depth sheets.' },
         { label: 'Product Search', query: 'search 10 micron filter element', pause: 6000,
           narration: 'Search by specs — micron, material, product type. In-stock results with pricing.' },
+        { label: 'Material Search', query: 'search polypropylene cartridge', pause: 6000,
+          narration: 'Search by material — find every PP, PTFE, glass fiber, or stainless product.' },
         { label: 'Compare Products', query: 'compare 2004355 vs CMBF1-30NN', pause: 8000,
           narration: 'Side-by-side comparison of any two products. Specs, price, availability.' },
         { label: 'Manufacturer Browse', query: 'manufacturer PPC', pause: 6000,
           narration: 'Browse by manufacturer. See their full catalog with stock levels.' },
-        { label: 'Real-World Scenario', query: 'I need a filter for hydraulic oil at 10 micron 200F', pause: 10000,
+        { label: 'Another Manufacturer', query: 'manufacturer Graver', pause: 6000,
+          narration: '1,200+ manufacturers in the system. Every brand your reps sell.' },
+        { label: 'Refinery Scenario', query: 'I need a filter for hydraulic oil at 10 micron 200F', pause: 10000,
           narration: 'Describe what you need in plain English. FM finds compatible products automatically.' },
+        { label: 'Ask the Expert', query: 'what filter do I need for glycol dehydration in a gas plant', pause: 10000,
+          narration: 'John\'s 30 years of expertise — application-specific recommendations with KB references.' },
+        { label: 'Escalation Check', query: 'I need a filter for 500F hydrogen service', pause: 6000,
+          narration: 'Safety guardrails built in — dangerous conditions auto-escalate to engineering.' },
     ];
 
     var simState = { running: false, paused: false, step: 0, abortFlag: false };

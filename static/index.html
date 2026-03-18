@@ -34,10 +34,10 @@
             align-items: center;
         }
 
-        /* Center container — 800px max on desktop, full on mobile */
+        /* Center container — 1100px max on desktop (wider for two-lane), full on mobile */
         .app-shell {
             width: 100%;
-            max-width: 800px;
+            max-width: 1100px;
             height: 100%;
             display: flex;
             flex-direction: column;
@@ -45,7 +45,7 @@
             background: white;
             box-shadow: 0 0 20px rgba(0,0,0,0.08);
         }
-        @media (max-width: 800px) {
+        @media (max-width: 1100px) {
             .app-shell { box-shadow: none; }
         }
 
@@ -1060,6 +1060,208 @@
         body.dark-mode .compare-form { background: var(--navy); border-color: var(--border); }
         body.dark-mode .compare-form input { background: var(--card-bg); color: var(--text); border-color: var(--border); }
 
+        /* ── Two-Lane Workbench ── */
+        .workbench {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .lane-1 {
+            width: 280px;
+            min-width: 280px;
+            border-right: 1px solid var(--border);
+            background: #f8f9fb;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s ease, min-width 0.3s ease;
+        }
+        .lane-1.collapsed {
+            width: 0;
+            min-width: 0;
+            border-right: none;
+            overflow: hidden;
+        }
+        .lane-2 {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+        .lane1-header {
+            padding: 12px 14px;
+            font-weight: 700;
+            font-size: 13px;
+            color: var(--navy);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .lane1-toggle {
+            background: none;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+            color: var(--text-light);
+            padding: 2px 6px;
+        }
+        .context-card {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        .ctx-field {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            font-size: 13px;
+        }
+        .ctx-label {
+            color: var(--text-light);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .ctx-value {
+            font-weight: 600;
+            color: var(--navy);
+            font-size: 13px;
+        }
+        .ctx-value.ctx-empty {
+            color: var(--stock-red);
+            opacity: 0.5;
+        }
+        .ctx-value.ctx-filled {
+            color: var(--stock-green);
+        }
+        .ctx-readiness {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        .ctx-readiness-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-light);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .ctx-step {
+            padding: 4px 0;
+            font-size: 13px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ctx-check {
+            font-size: 14px;
+        }
+        .ctx-step.done .ctx-check {
+            color: var(--stock-green);
+        }
+        .ctx-count {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--text-light);
+        }
+        .pinned-product {
+            padding: 8px 14px;
+        }
+        .pinned-product:empty {
+            display: none;
+        }
+        .pinned-product .product-card {
+            font-size: 12px;
+        }
+        .pinned-product .product-card-header {
+            font-size: 13px;
+            padding: 8px 12px;
+        }
+        .ctx-actions {
+            padding: 8px 14px;
+            margin-top: auto;
+        }
+        .ctx-action-btn {
+            width: 100%;
+            padding: 8px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            color: var(--text-light);
+            font-family: inherit;
+        }
+        .ctx-action-btn:hover {
+            background: #e8ecf2;
+        }
+
+        /* Mobile: Lane 1 becomes top drawer */
+        @media (max-width: 768px) {
+            .workbench {
+                flex-direction: column;
+            }
+            .lane-1 {
+                width: 100% !important;
+                min-width: 100% !important;
+                max-height: 180px;
+                border-right: none;
+                border-bottom: 2px solid var(--navy);
+                overflow-y: auto;
+            }
+            .lane-1.collapsed {
+                max-height: 0;
+                border-bottom: none;
+                padding: 0;
+            }
+            .context-card {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 12px;
+                padding: 8px 12px;
+            }
+            .ctx-field {
+                flex: 0 0 auto;
+                gap: 4px;
+                padding: 2px 0;
+            }
+            .ctx-readiness {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                padding: 6px 12px;
+                flex-wrap: wrap;
+            }
+            .ctx-readiness-title {
+                margin-bottom: 0;
+            }
+            .ctx-step {
+                padding: 0;
+                font-size: 12px;
+            }
+            .pinned-product {
+                display: none;
+            }
+            .ctx-actions {
+                display: none;
+            }
+        }
+
+        /* Dark mode for lanes */
+        body.dark-mode .lane-1 { background: #0a1628; border-right-color: var(--border); }
+        body.dark-mode .lane1-header { color: var(--text); }
+        body.dark-mode .context-card { border-bottom-color: var(--border); }
+        body.dark-mode .ctx-readiness { border-bottom-color: var(--border); }
+        body.dark-mode .ctx-action-btn { background: var(--navy); color: var(--text); border-color: var(--border); }
+
         /* ── Compare Side Panel ── */
         .compare-panel {
             position: fixed;
@@ -1654,13 +1856,46 @@
     <button class="qa-exit-flow" id="exitFlowBtn" onclick="exitFlow()">&#10005; Back</button>
 </div>
 
+<div class="workbench" id="workbench">
+    <!-- Lane 1 — Context -->
+    <div class="lane-1" id="lane1">
+        <div class="lane1-header">
+            <span>Context</span>
+            <button class="lane1-toggle" onclick="toggleLane1()" id="lane1Toggle">&#9664;</button>
+        </div>
+        <div class="context-card" id="contextCard">
+            <div class="ctx-field" id="ctxFluid"><span class="ctx-label">Fluid</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxMicron"><span class="ctx-label">Micron</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxTemp"><span class="ctx-label">Temp</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxFlow"><span class="ctx-label">Flow</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxPSI"><span class="ctx-label">PSI</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxIndustry"><span class="ctx-label">Industry</span><span class="ctx-value ctx-empty">?</span></div>
+            <div class="ctx-field" id="ctxChemical"><span class="ctx-label">Chemical</span><span class="ctx-value ctx-empty">&mdash;</span></div>
+        </div>
+        <div class="ctx-readiness" id="ctxReadiness">
+            <div class="ctx-readiness-title">Quote Readiness</div>
+            <div class="ctx-step" id="ctxStepSpecs"><span class="ctx-check">&#9675;</span> Specs <span class="ctx-count" id="ctxSpecCount">0/6</span></div>
+            <div class="ctx-step" id="ctxStepProduct"><span class="ctx-check">&#9675;</span> Product</div>
+            <div class="ctx-step" id="ctxStepChemical"><span class="ctx-check">&#9675;</span> Chemical</div>
+            <div class="ctx-step" id="ctxStepCompare"><span class="ctx-check">&#9675;</span> Compare</div>
+        </div>
+        <div id="pinnedProduct" class="pinned-product"></div>
+        <div class="ctx-actions">
+            <button class="ctx-action-btn" onclick="clearContext()">Clear Context</button>
+        </div>
+    </div>
+    <!-- Lane 2 — Chat -->
+    <div class="lane-2" id="lane2">
+
 <!-- Chat Area -->
 <div class="chat-area" id="chatArea">
     <div class="welcome">
         <div class="welcome-icon">&#9881;</div>
         <h2>Welcome to Filtration Mastermind</h2>
         <p>Your AI-powered filtration product assistant.<br>
-        Ask about parts, chemicals, specs, or use the quick actions above.</p>
+        72,000+ products. Real-time inventory. John's 30 years of expertise.</p>
+        <button onclick="startSimulate()" style="margin-top:20px; padding:16px 36px; background:linear-gradient(135deg, #003366, #0066CC); color:white; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; box-shadow:0 4px 16px rgba(0,102,204,0.3); transition:transform 0.15s, box-shadow 0.15s; font-family:inherit; letter-spacing:0.3px;" onmouseover="this.style.transform='scale(1.03)'; this.style.boxShadow='0 6px 24px rgba(0,102,204,0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 16px rgba(0,102,204,0.3)'">&#9654;&nbsp; See What AI Can Do</button>
+        <p style="margin-top:10px; font-size:12px; color:var(--text-light);">14-step live demo with real data</p>
     </div>
 </div>
 
@@ -1696,6 +1931,9 @@
         </svg>
     </button>
 </div>
+
+    </div><!-- /lane-2 -->
+</div><!-- /workbench -->
 
 </div><!-- /app-shell -->
 
