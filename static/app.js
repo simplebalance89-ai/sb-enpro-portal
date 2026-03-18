@@ -874,6 +874,7 @@
         document.getElementById('manufacturerSelect').style.display = type === 'manufacturer' ? 'block' : 'none';
         document.getElementById('pregameSelect').style.display = type === 'pregame' ? 'block' : 'none';
         document.getElementById('productTypeSelect').style.display = type === 'product_type' ? 'block' : 'none';
+        document.getElementById('searchTags').style.display = type === 'search' ? 'block' : 'none';
 
         switch (type) {
             case 'lookup':
@@ -1109,6 +1110,12 @@
         suggestSelectedIndex = -1;
         suggestItems = [];
         origHideModal(e);
+    };
+
+    // ── Quick search from tags ──
+    window.quickSearch = function (term) {
+        hideModal();
+        doSearch(term);
     };
 
     // ── Copy to clipboard (no email app) ──

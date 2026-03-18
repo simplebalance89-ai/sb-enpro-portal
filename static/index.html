@@ -832,6 +832,25 @@
             .qt-step { font-size: 10px; }
             .action-grid { grid-template-columns: 1fr 1fr; }
         }
+        /* ── Search Tags ── */
+        .search-tag-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .search-tag {
+            padding: 5px 10px;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            font-size: 12px;
+            color: var(--navy);
+            cursor: pointer;
+            transition: all 0.15s;
+            font-weight: 500;
+        }
+        .search-tag:hover { background: var(--navy); color: white; border-color: var(--navy); }
+
         /* ── Consolidated Card Rows ── */
         .consol-row {
             padding: 10px 14px;
@@ -1070,6 +1089,21 @@
                 <option value="semiconductor">Semiconductor</option>
                 <option value="wastewater">Wastewater</option>
             </select>
+            <div class="search-tags" id="searchTags" style="display:none; margin-top:10px;">
+                <div style="font-size:11px; color:var(--text-light); margin-bottom:6px; font-weight:600;">Quick Search:</div>
+                <div class="search-tag-grid">
+                    <button class="search-tag" onclick="quickSearch('Filter Cartridge')">Filter Cartridge</button>
+                    <button class="search-tag" onclick="quickSearch('Filter Element')">Filter Element</button>
+                    <button class="search-tag" onclick="quickSearch('Filter Bag')">Filter Bag</button>
+                    <button class="search-tag" onclick="quickSearch('Filter Housing')">Filter Housing</button>
+                    <button class="search-tag" onclick="quickSearch('Depth Sheet')">Depth Sheet</button>
+                    <button class="search-tag" onclick="quickSearch('Membrane')">Membrane</button>
+                    <button class="search-tag" onclick="quickSearch('O-Ring')">O-Ring / Seal</button>
+                    <button class="search-tag" onclick="quickSearch('Stainless Steel')">Stainless Steel</button>
+                    <button class="search-tag" onclick="quickSearch('10 micron')">10 Micron</button>
+                    <button class="search-tag" onclick="quickSearch('1 micron')">1 Micron</button>
+                </div>
+            </div>
             <div class="hint" id="modalHint"></div>
         </div>
         <div class="modal-footer">
