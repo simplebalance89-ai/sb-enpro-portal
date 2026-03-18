@@ -132,10 +132,8 @@
                     appendMessage('bot', 'No products found ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + esc(partNumber) + '".\nContact: service@enproinc.com | 1 (800) 323-2416');
                 } else {
                     appendMessage('bot', formatMarkdown('Found **' + suggestions.length + '** matches ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + partNumber + '" [V25 FILTERS]:'));
-                    suggestions.forEach(function (s) {
-                        // Do a full lookup for each to get the product card
-                        fetchAndShowProduct(s.Part_Number);
-                    });
+                    // Stagger card loading so results cascade in smoothly
+                    await loadProductsStaggered(suggestions);
                 }
             }
         } catch (err) {
@@ -146,20 +144,26 @@
         }
     };
 
-    // Fetch a single product and render its card
-    async function fetchAndShowProduct(partNumber) {
-        try {
-            var res = await fetch(API_BASE + '/api/lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ part_number: partNumber })
-            });
-            var data = await res.json();
-            if (data.found && data.product) {
-                appendCard(renderProductCard(data.product));
+    // Load products one at a time with a stagger delay for smooth cascading
+    async function loadProductsStaggered(suggestions) {
+        for (var i = 0; i < suggestions.length; i++) {
+            try {
+                var res = await fetch(API_BASE + '/api/lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ part_number: suggestions[i].Part_Number })
+                });
+                var data = await res.json();
+                if (data.found && data.product) {
+                    appendCard(renderProductCard(data.product), true);
+                }
+            } catch (err) {
+                console.error('Product fetch error for ' + suggestions[i].Part_Number + ':', err);
             }
-        } catch (err) {
-            console.error('Product fetch error for ' + partNumber + ':', err);
+            // Small delay between cards for smooth cascade effect
+            if (i < suggestions.length - 1) {
+                await new Promise(function (resolve) { setTimeout(resolve, 150); });
+            }
         }
     }
 
@@ -212,7 +216,7 @@
     };
 
     // ── Response handler ──
-    function handleResponse(data) {
+    async function handleResponse(data) {
         if (!data) {
             appendMessage('bot', 'No response received.');
             return;
@@ -221,15 +225,23 @@
         // Handle different response shapes
         if (data.products && Array.isArray(data.products) && data.products.length > 0) {
             if (data.text || data.response) appendMessage('bot', formatMarkdown(data.text || data.response));
-            data.products.forEach(function (p) {
-                appendCard(renderProductCard(p));
-                appendFollowUps(p.Part_Number || p.part_number || '');
-            });
+            for (var i = 0; i < data.products.length; i++) {
+                var p = data.products[i];
+                appendCard(renderProductCard(p), data.products.length > 1);
+                if (i === data.products.length - 1) appendFollowUps(p.Part_Number || p.part_number || '');
+                if (data.products.length > 1 && i < data.products.length - 1) {
+                    await new Promise(function (r) { setTimeout(r, 150); });
+                }
+            }
         } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-            data.results.forEach(function (p) {
-                appendCard(renderProductCard(p));
-                appendFollowUps(p.Part_Number || p.part_number || '');
-            });
+            for (var j = 0; j < data.results.length; j++) {
+                var p2 = data.results[j];
+                appendCard(renderProductCard(p2), data.results.length > 1);
+                if (j === data.results.length - 1) appendFollowUps(p2.Part_Number || p2.part_number || '');
+                if (data.results.length > 1 && j < data.results.length - 1) {
+                    await new Promise(function (r) { setTimeout(r, 150); });
+                }
+            }
         } else if (data.chemical) {
             appendCard(renderChemicalCard(data.chemical));
         } else if (data.table) {
@@ -514,11 +526,23 @@
     }
 
     // ── Append raw card HTML ──
-    function appendCard(cardHtml) {
+    function appendCard(cardHtml, staggered) {
         var wrapper = document.createElement('div');
         wrapper.className = 'msg bot';
+        if (staggered) {
+            wrapper.style.opacity = '0';
+            wrapper.style.transform = 'translateY(12px)';
+            wrapper.style.transition = 'opacity 0.3s ease-out, transform 0.3s ease-out';
+        }
         wrapper.innerHTML = cardHtml;
         chatArea.appendChild(wrapper);
+        if (staggered) {
+            // Trigger animation on next frame
+            requestAnimationFrame(function () {
+                wrapper.style.opacity = '1';
+                wrapper.style.transform = 'translateY(0)';
+            });
+        }
         scrollToBottom();
     }
 
