@@ -783,8 +783,17 @@
             html += '</div></div>';
         }
 
+        // Manual compare input — always visible
+        html += '<div style="padding: 0 0 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;">';
+        html += '<label style="font-size:13px; font-weight:600; margin-bottom:6px; display:block;">Compare with any part:</label>';
+        html += '<div style="display:flex; gap:8px;">';
+        html += '<input type="text" id="compareManualInput" placeholder="Enter part number..." onkeydown="if(event.key===\'Enter\')runCompareManual(\'' + esc(sourcePartNumber) + '\')" style="flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px;">';
+        html += '<button class="quote-btn-primary" style="flex:none; padding:10px 16px;" onclick="runCompareManual(\'' + esc(sourcePartNumber) + '\')">Compare</button>';
+        html += '</div></div>';
+
         // Categories
         if (data.categories && data.categories.length > 0) {
+            html += '<div style="font-size:12px; text-transform:uppercase; color:var(--text-light); font-weight:700; letter-spacing:0.5px; margin-bottom:12px;">Or pick from suggestions:</div>';
             data.categories.forEach(function (cat) {
                 html += '<div class="compare-category">';
                 html += '<div class="compare-category-header">' + esc(cat.name) + '</div>';
@@ -810,13 +819,7 @@
                 html += '</div>';
             });
         } else {
-            html += '<div class="compare-empty">No similar products found for this part. Try a manual comparison.</div>';
-            html += '<div style="padding: 12px 0;">';
-            html += '<label style="font-size:13px; font-weight:600; margin-bottom:6px; display:block;">Compare with:</label>';
-            html += '<div style="display:flex; gap:8px;">';
-            html += '<input type="text" id="compareManualInput" placeholder="Enter part number..." style="flex:1; padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:14px;">';
-            html += '<button class="quote-btn-primary" style="flex:none; padding:8px 16px;" onclick="runCompareManual(\'' + esc(sourcePartNumber) + '\')">Go</button>';
-            html += '</div></div>';
+            html += '<div class="compare-empty">No similar products found in the catalog. Use the text box above to compare manually.</div>';
         }
 
         body.innerHTML = html;
