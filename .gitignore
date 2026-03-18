@@ -3,3 +3,7 @@ __pycache__/
 data/sessions/
 data/audit.jsonl
 .env
+node_modules/
+playwright-report/
+test-results/
+package-lock.json
