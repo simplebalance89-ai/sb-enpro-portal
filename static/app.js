@@ -544,6 +544,7 @@
         html += '<div class="card-actions">';
         html += '<button class="card-action-btn" onclick="printCard(this)">&#128424; Print</button>';
         html += '<button class="card-action-btn" onclick="copyCard(this)">&#128203; Copy</button>';
+        html += '<button class="card-action-btn" onclick="addToQuote(this)" style="color:var(--accent);">&#128221; Quote</button>';
         html += '<button class="card-action-btn" onclick="reportCard(this)" style="color:var(--stock-red);">&#9873; Report</button>';
         html += '<button class="card-action-btn" onclick="pinCardProduct(this)">&#128204; Pin</button>';
         html += '</div>';
@@ -2545,11 +2546,97 @@
     window.toggleLane1 = function () {
         var lane1 = document.getElementById('lane1');
         var btn = document.getElementById('lane1Toggle');
+        var expandTab = document.getElementById('lane1ExpandTab');
         if (lane1) {
             lane1.classList.toggle('collapsed');
-            if (btn) btn.innerHTML = lane1.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
+            var isCollapsed = lane1.classList.contains('collapsed');
+            if (btn) btn.innerHTML = isCollapsed ? '&#9654;' : '&#9664;';
+            if (expandTab) expandTab.classList.toggle('visible', isCollapsed);
         }
     };
+
+    // ── Quote Drawer (right side) ──
+    var quoteItems = JSON.parse(localStorage.getItem('enpro_quote_items') || '[]');
+
+    window.toggleQuoteDrawer = function () {
+        var drawer = document.getElementById('quoteDrawer');
+        if (drawer) drawer.classList.toggle('open');
+    };
+
+    window.addToQuote = function (btn) {
+        var card = btn.closest('.product-card');
+        if (!card) return;
+        var header = card.querySelector('.product-card-header');
+        var pn = header ? header.textContent.replace('Part Number: ', '').trim() : '';
+        if (!pn) return;
+
+        // Check duplicate
+        if (quoteItems.some(function (q) { return q.part_number === pn; })) {
+            btn.textContent = 'Already added';
+            return;
+        }
+
+        var price = '';
+        var priceEl = card.querySelector('.product-price');
+        if (priceEl) price = priceEl.textContent.trim();
+
+        var desc = '';
+        var fields = card.querySelectorAll('.product-field');
+        fields.forEach(function (f) {
+            var label = f.querySelector('.product-field-label');
+            if (label && label.textContent.trim() === 'Description') {
+                desc = f.querySelector('.product-field-value').textContent.trim();
+            }
+        });
+
+        quoteItems.push({ part_number: pn, description: desc, price: price, quantity: 1 });
+        localStorage.setItem('enpro_quote_items', JSON.stringify(quoteItems));
+        renderQuoteDrawer();
+
+        btn.textContent = '✓ Added';
+        btn.style.color = 'var(--stock-green)';
+        btn.style.pointerEvents = 'none';
+    };
+
+    window.removeFromQuote = function (idx) {
+        quoteItems.splice(idx, 1);
+        localStorage.setItem('enpro_quote_items', JSON.stringify(quoteItems));
+        renderQuoteDrawer();
+    };
+
+    window.updateQuoteQty = function (idx, val) {
+        quoteItems[idx].quantity = parseInt(val) || 1;
+        localStorage.setItem('enpro_quote_items', JSON.stringify(quoteItems));
+    };
+
+    function renderQuoteDrawer() {
+        var body = document.getElementById('quoteDrawerBody');
+        var countEl = document.getElementById('quoteItemCount');
+        var tabEl = document.getElementById('quoteTab');
+
+        if (!body) return;
+
+        if (quoteItems.length === 0) {
+            body.innerHTML = '<div class="quote-drawer-empty">Click "Add to Quote" on any product card to start building.</div>';
+        } else {
+            var html = '';
+            quoteItems.forEach(function (item, idx) {
+                html += '<div class="quote-drawer-item">';
+                html += '<div class="qdi-pn">' + esc(item.part_number) + '</div>';
+                html += '<div class="qdi-price">' + esc(item.price || '') + '</div>';
+                html += '<div class="qdi-qty"><input type="number" min="1" value="' + (item.quantity || 1) + '" onchange="updateQuoteQty(' + idx + ', this.value)"></div>';
+                html += '<button class="qdi-remove" onclick="removeFromQuote(' + idx + ')">&times;</button>';
+                html += '</div>';
+            });
+            body.innerHTML = html;
+        }
+
+        if (countEl) countEl.textContent = quoteItems.length;
+        if (tabEl) tabEl.innerHTML = '&#128221; Quote (' + quoteItems.length + ')';
+    }
+
+    // Render on load
+    renderQuoteDrawer();
 
     window.pinCardProduct = function(btn) {
         var card = btn.closest('.product-card');
