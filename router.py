@@ -402,6 +402,12 @@ async def handle_message(
             "governance": pre_check,
         }
 
+    # --- Ask John mode: skip intent classification, force KB reasoning ---
+    if mode == "ask_john":
+        logger.info(f"ASK JOHN mode | Message: {message[:80]}")
+        advisory = pre_check.get("advisory") if pre_check else None
+        return await _handle_gpt(message, "application", df, chemicals_df, history, advisory)
+
     # --- Intent classification ---
     intent = await classify_intent(message)
     logger.info(f"Intent: {intent} | Message: {message[:80]}")

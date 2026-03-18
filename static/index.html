@@ -434,6 +434,73 @@
         .send-btn:disabled { background: #ccc; cursor: default; }
         .send-btn svg { width: 20px; height: 20px; }
 
+        /* ── Ask John Button ── */
+        .ask-john-btn {
+            height: 42px;
+            padding: 0 14px;
+            background: var(--purple);
+            color: white;
+            border: none;
+            border-radius: 21px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: background 0.15s, transform 0.1s;
+            white-space: nowrap;
+        }
+        .ask-john-btn:hover { background: var(--navy); }
+        .ask-john-btn:active { transform: scale(0.95); }
+        .ask-john-btn svg { width: 18px; height: 18px; }
+        @media (max-width: 520px) {
+            .ask-john-btn span { display: none; }
+            .ask-john-btn { padding: 0 10px; border-radius: 50%; width: 42px; justify-content: center; }
+        }
+
+        /* ── Pregame Picker Modal ── */
+        .pregame-picker {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .pregame-picker-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .pregame-picker-field label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .pregame-picker-field select {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            background: white;
+            cursor: pointer;
+        }
+        .pregame-picker-field select:focus { border-color: var(--accent); outline: none; }
+        .pregame-run-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 4px;
+            transition: background 0.15s;
+        }
+        .pregame-run-btn:hover { background: var(--navy); }
+
         /* ── Modals ── */
         .modal-overlay {
             display: none;
@@ -987,9 +1054,519 @@
         body.dark-mode .stock-section { border-color: var(--border); }
         body.dark-mode .compare-form { background: var(--navy); border-color: var(--border); }
         body.dark-mode .compare-form input { background: var(--card-bg); color: var(--text); border-color: var(--border); }
+
+        /* ── Compare Side Panel ── */
+        .compare-panel {
+            position: fixed;
+            top: 0;
+            right: -480px;
+            width: 460px;
+            height: 100vh;
+            background: white;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.15);
+            z-index: 1100;
+            transition: right 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .compare-panel.open {
+            right: 0;
+        }
+        .compare-panel-header {
+            background: var(--navy);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .compare-panel-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .compare-panel-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 22px;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .compare-panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .compare-source {
+            background: #f0f4ff;
+            border: 2px solid var(--accent);
+            border-radius: var(--radius);
+            padding: 12px 16px;
+            margin-bottom: 16px;
+        }
+        .compare-source-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--accent);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .compare-source-pn {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--navy);
+        }
+        .compare-source-desc {
+            font-size: 13px;
+            color: var(--text-light);
+            margin-top: 2px;
+        }
+        .compare-source-specs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .compare-spec-tag {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            color: var(--text);
+        }
+        .compare-category {
+            margin-bottom: 20px;
+        }
+        .compare-category-header {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--navy);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .compare-category-desc {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-bottom: 10px;
+        }
+        .compare-suggestion {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .compare-suggestion:hover {
+            border-color: var(--accent);
+            box-shadow: 0 2px 8px rgba(0,102,204,0.12);
+        }
+        .compare-suggestion-info {
+            flex: 1;
+        }
+        .compare-suggestion-pn {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--navy);
+        }
+        .compare-suggestion-desc {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 2px;
+        }
+        .compare-suggestion-specs {
+            font-size: 11px;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+        .compare-suggestion-action {
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+            margin-left: 10px;
+        }
+        .compare-panel-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 1099;
+            display: none;
+        }
+        .compare-panel-overlay.active {
+            display: block;
+        }
+        .compare-loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-light);
+        }
+        .compare-empty {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--text-light);
+            font-size: 14px;
+        }
+        @media (max-width: 520px) {
+            .compare-panel {
+                width: 100%;
+                right: -100%;
+            }
+        }
+
+        /* ── Session History Sidebar ── */
+        .history-sidebar {
+            position: fixed;
+            top: 0;
+            left: -280px;
+            width: 260px;
+            height: 100vh;
+            background: white;
+            box-shadow: 4px 0 16px rgba(0,0,0,0.1);
+            z-index: 1050;
+            transition: left 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .history-sidebar.open {
+            left: 0;
+        }
+        .history-sidebar-header {
+            background: var(--navy);
+            color: white;
+            padding: 14px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            font-size: 15px;
+            flex-shrink: 0;
+        }
+        .history-toggle-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .history-sidebar-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .history-section {
+            margin-bottom: 16px;
+        }
+        .history-section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-light);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border);
+        }
+        .history-item {
+            padding: 6px 8px;
+            font-size: 13px;
+            color: var(--text);
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 2px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .history-item:hover {
+            background: #f0f4ff;
+        }
+        .history-item-time {
+            font-size: 10px;
+            color: var(--text-light);
+        }
+        .history-item-query {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-right: 8px;
+        }
+        .history-stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .history-stat-label {
+            color: var(--text-light);
+        }
+        .history-stat-value {
+            font-weight: 600;
+            color: var(--navy);
+        }
+        .history-actions {
+            padding: 12px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .history-action-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            text-align: center;
+            transition: background 0.2s;
+        }
+        .history-action-btn:hover {
+            background: #e8ecf2;
+        }
+        .history-open-btn {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 1040;
+            background: var(--navy);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: opacity 0.3s;
+        }
+        .history-open-btn:hover {
+            opacity: 0.9;
+        }
+        @media (max-width: 800px) {
+            .history-open-btn {
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+        }
+
+        /* ── Quote Builder Modal ── */
+        .quote-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 1200;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .quote-modal-overlay.active {
+            display: flex;
+        }
+        .quote-modal {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 520px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        }
+        .quote-modal-header {
+            background: var(--navy);
+            color: white;
+            padding: 16px 20px;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .quote-modal-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+        .quote-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .quote-modal-footer {
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .quote-btn-primary {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            flex: 1;
+        }
+        .quote-btn-primary:hover { opacity: 0.9; }
+        .quote-btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 24px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .quote-field {
+            margin-bottom: 14px;
+        }
+        .quote-field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .quote-field input, .quote-field textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .quote-field textarea { resize: vertical; min-height: 60px; }
+        .quote-step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .quote-step-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+        .quote-step-dot.active {
+            background: var(--accent);
+        }
+        .quote-step-dot.done {
+            background: var(--stock-green);
+        }
+        .quote-item-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+            padding: 8px;
+            background: var(--bg);
+            border-radius: 6px;
+        }
+        .quote-item-row .qi-pn {
+            font-weight: 600;
+            flex: 2;
+            font-size: 13px;
+        }
+        .quote-item-row .qi-desc {
+            flex: 3;
+            font-size: 12px;
+            color: var(--text-light);
+        }
+        .quote-item-row .qi-qty {
+            width: 60px;
+        }
+        .quote-item-row .qi-qty input {
+            width: 100%;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .quote-item-remove {
+            background: none;
+            border: none;
+            color: var(--stock-red);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0 4px;
+        }
+        .quote-add-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--accent);
+            font-size: 13px;
+            cursor: pointer;
+            padding: 6px 0;
+            border: none;
+            background: none;
+            font-weight: 600;
+        }
+        .quote-summary-section {
+            margin-bottom: 12px;
+        }
+        .quote-summary-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-light);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .quote-summary-value {
+            font-size: 14px;
+            color: var(--text);
+            margin-top: 2px;
+        }
+
+        /* ── Dark Mode: New Components ── */
+        body.dark-mode .compare-panel { background: var(--card-bg); }
+        body.dark-mode .compare-panel-header { background: #0a1628; }
+        body.dark-mode .compare-source { background: var(--navy); border-color: var(--accent); }
+        body.dark-mode .compare-source-pn { color: var(--text); }
+        body.dark-mode .compare-spec-tag { background: var(--card-bg); color: var(--text); border-color: var(--border); }
+        body.dark-mode .compare-category-header { color: var(--text); }
+        body.dark-mode .compare-suggestion { background: var(--card-bg); border-color: var(--border); }
+        body.dark-mode .compare-suggestion:hover { border-color: var(--accent); }
+        body.dark-mode .compare-suggestion-pn { color: var(--text); }
+        body.dark-mode .history-sidebar { background: var(--card-bg); }
+        body.dark-mode .history-sidebar-header { background: #0a1628; }
+        body.dark-mode .history-item:hover { background: var(--navy); }
+        body.dark-mode .history-action-btn { background: var(--navy); color: var(--text); border-color: var(--border); }
+        body.dark-mode .history-action-btn:hover { background: var(--accent); color: white; }
+        body.dark-mode .history-open-btn { background: #0a1628; }
+        body.dark-mode .quote-modal { background: var(--card-bg); }
+        body.dark-mode .quote-modal-header { background: #0a1628; }
+        body.dark-mode .quote-field input, body.dark-mode .quote-field textarea { background: var(--navy); color: var(--text); border-color: var(--border); }
+        body.dark-mode .quote-item-row { background: var(--navy); }
+        body.dark-mode .quote-btn-secondary { background: var(--navy); color: var(--text); border-color: var(--border); }
     </style>
 </head>
 <body>
+<button class="history-open-btn" id="historyOpenBtn" onclick="toggleHistorySidebar()">&#9776; History</button>
 <div class="app-shell">
 
 <!-- Header -->
@@ -1008,6 +1585,9 @@
     <button class="qa-btn" onclick="showModal('lookup')">
         <span class="qa-icon">&#128269;</span> Lookup
     </button>
+    <button class="qa-btn" onclick="showModal('chemical')">
+        <span class="qa-icon">&#9879;</span> Chemical
+    </button>
     <button class="qa-btn" onclick="showModal('search')">
         <span class="qa-icon">&#128196;</span> Search
     </button>
@@ -1020,7 +1600,10 @@
     <button class="qa-btn" onclick="showModal('product_type')">
         <span class="qa-icon">&#128220;</span> Product Type
     </button>
-    <button class="qa-btn" onclick="showModal('pregame')">
+    <button class="qa-btn" onclick="showModal('industry')">
+        <span class="qa-icon">&#127981;</span> Industry
+    </button>
+    <button class="qa-btn" onclick="openPregamePicker()">
         <span class="qa-icon">&#127919;</span> Pregame
     </button>
     <button class="qa-btn" onclick="sendMessage('demo')">
@@ -1028,6 +1611,9 @@
     </button>
     <button class="qa-btn" onclick="sendMessage('help')">
         <span class="qa-icon">&#10067;</span> Help
+    </button>
+    <button class="qa-btn" onclick="openQuoteModal()">
+        <span class="qa-icon">&#128221;</span> Build Quote
     </button>
 </div>
 
@@ -1052,6 +1638,13 @@
 <div class="input-area">
     <textarea id="userInput" rows="1" placeholder="Ask about a part, chemical, or product..."
         onkeydown="handleKeyDown(event)" oninput="autoGrow(this)"></textarea>
+    <button class="ask-john-btn" id="askJohnBtn" onclick="askJohn()" title="Ask John — route through KB expertise">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span>Ask John</span>
+    </button>
     <button class="mic-btn" id="micBtn" onclick="toggleVoice()" title="Voice input">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -1124,6 +1717,23 @@
             <select id="manufacturerSelect" class="chemical-select" style="display:none; width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; margin-top:8px;">
                 <option value="">-- Pick a manufacturer --</option>
             </select>
+            <select id="industrySelect" class="chemical-select" style="display:none; width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; margin-top:8px;">
+                <option value="">-- Pick an industry --</option>
+                <option value="Refinery / Oil & Gas">Refinery / Oil & Gas</option>
+                <option value="Brewery / Beverage">Brewery / Beverage</option>
+                <option value="Dairy / CIP">Dairy / CIP</option>
+                <option value="Municipal Water">Municipal Water</option>
+                <option value="Pharmaceutical">Pharmaceutical</option>
+                <option value="Power Plant / Turbine">Power Plant / Turbine</option>
+                <option value="Chemical Processing">Chemical Processing</option>
+                <option value="Food & Beverage">Food & Beverage</option>
+                <option value="Hydraulic Systems">Hydraulic Systems</option>
+                <option value="Paint & Coatings">Paint & Coatings</option>
+                <option value="Petrochemical">Petrochemical</option>
+                <option value="Pulp & Paper">Pulp & Paper</option>
+                <option value="Semiconductor">Semiconductor</option>
+                <option value="Wastewater">Wastewater</option>
+            </select>
             <select id="pregameSelect" class="chemical-select" style="display:none; width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; margin-top:8px;">
                 <option value="">-- Pick an industry --</option>
                 <option value="refinery">Refinery / Oil & Gas</option>
@@ -1161,6 +1771,62 @@
         <div class="modal-footer">
             <button class="modal-btn secondary" onclick="hideModal()">Cancel</button>
             <button class="modal-btn primary" onclick="modalSubmit()">Go</button>
+        </div>
+    </div>
+</div>
+
+<!-- Compare Side Panel -->
+<div class="compare-panel-overlay" id="comparePanelOverlay" onclick="closeComparePanel()"></div>
+<div class="compare-panel" id="comparePanel">
+    <div class="compare-panel-header">
+        <h3 id="comparePanelTitle">Compare Products</h3>
+        <button class="compare-panel-close" onclick="closeComparePanel()">&times;</button>
+    </div>
+    <div class="compare-panel-body" id="comparePanelBody">
+        <!-- Populated dynamically -->
+    </div>
+</div>
+
+<!-- Session History Sidebar -->
+<div class="history-sidebar" id="historySidebar">
+    <div class="history-sidebar-header">
+        <span>History</span>
+        <button class="history-toggle-btn" onclick="toggleHistorySidebar()" title="Close">&times;</button>
+    </div>
+    <div class="history-sidebar-body" id="historySidebarBody">
+        <div class="history-section">
+            <div class="history-section-title">Recent Searches</div>
+            <div id="historySearches"></div>
+        </div>
+        <div class="history-section">
+            <div class="history-section-title">Flagged Reports</div>
+            <div id="historyReports"></div>
+        </div>
+        <div class="history-section">
+            <div class="history-section-title">Session Stats</div>
+            <div id="historyStats"></div>
+        </div>
+        <div class="history-actions">
+            <button class="history-action-btn" onclick="emailReports()">&#9993; Email Reports</button>
+            <button class="history-action-btn" onclick="downloadTranscript()">&#11015; Download</button>
+            <button class="history-action-btn" onclick="clearHistory()" style="color:var(--stock-red);">&#10005; Clear</button>
+        </div>
+    </div>
+</div>
+
+<!-- Quote Builder Modal -->
+<div class="quote-modal-overlay" id="quoteModalOverlay" onclick="closeQuoteModal(event)">
+    <div class="quote-modal" onclick="event.stopPropagation()">
+        <div class="quote-modal-header">
+            <h3 id="quoteModalTitle">Build Quote</h3>
+            <button class="compare-panel-close" onclick="closeQuoteModal()">&times;</button>
+        </div>
+        <div class="quote-modal-body" id="quoteModalBody">
+            <!-- Steps populated dynamically -->
+        </div>
+        <div class="quote-modal-footer" id="quoteModalFooter">
+            <button class="quote-btn-secondary" id="quotePrevBtn" onclick="quoteStep(-1)" style="display:none;">Back</button>
+            <button class="quote-btn-primary" id="quoteNextBtn" onclick="quoteStep(1)">Next</button>
         </div>
     </div>
 </div>

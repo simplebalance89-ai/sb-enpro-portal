@@ -375,3 +375,119 @@ def suggest_parts(
             _collect(df[desc_lower.str.contains(re.escape(query_lower), na=False)])
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Similar product finder
+# ---------------------------------------------------------------------------
+def _lookup_part_row(df: pd.DataFrame, part_number: str) -> Optional[pd.Series]:
+    """Get raw DataFrame row for a part number (not formatted)."""
+    if df.empty or not part_number:
+        return None
+    norm = _normalize(part_number)
+    for col in ["Part_Number", "Supplier_Code", "Alt_Code"]:
+        if col not in df.columns:
+            continue
+        match = df[df[col].apply(_normalize) == norm]
+        if not match.empty:
+            return match.iloc[0]
+    return None
+
+
+def find_similar_products(
+    df: pd.DataFrame,
+    part_number: str,
+    max_per_category: int = 5,
+) -> dict:
+    """
+    Find products similar to the given part, grouped by comparison category.
+    Returns source product + categories: Other Manufacturers, Similar Specs, Same Type.
+    """
+    row = _lookup_part_row(df, part_number)
+    if row is None:
+        return {"source": None, "categories": []}
+
+    pn = str(row.get("Part_Number", ""))
+    product_type = str(row.get("Product_Type", "")).strip()
+    manufacturer = str(row.get("Final_Manufacturer", row.get("Manufacturer", ""))).strip()
+    micron = _to_float(row.get("Micron", 0))
+    max_temp = _to_float(row.get("Max_Temp_F", 0))
+    max_psi = _to_float(row.get("Max_PSI", 0))
+
+    source = format_product(row)
+    categories = []
+    seen_pns = {pn}  # Track shown part numbers to avoid duplicates across categories
+
+    def _collect(mask, label, max_n):
+        """Collect formatted products from mask, prefer in-stock, skip seen."""
+        filtered = df[mask & ~df["Part_Number"].astype(str).isin(seen_pns)]
+        if "Total_Stock" in filtered.columns:
+            stocked = filtered[filtered["Total_Stock"] > 0]
+            if not stocked.empty:
+                filtered = stocked
+        results = []
+        for _, r in filtered.head(max_n).iterrows():
+            rpn = str(r.get("Part_Number", ""))
+            if rpn not in seen_pns:
+                seen_pns.add(rpn)
+                results.append(format_product(r))
+        return results
+
+    # Category 1: Other Manufacturers — same product type, different brand
+    if product_type and product_type.lower() not in ("", "0", "nan"):
+        mask = (
+            (df["Product_Type"].astype(str).str.lower() == product_type.lower())
+            & (df["Final_Manufacturer"].astype(str).str.lower() != manufacturer.lower())
+        )
+        results = _collect(mask, "Other Manufacturers", max_per_category)
+        if results:
+            categories.append({
+                "name": "Other Manufacturers",
+                "desc": f"Same type ({product_type}), different brand",
+                "products": results,
+            })
+
+    # Category 2: Similar Specs — micron ±50%, temp ±100F, PSI ±50%
+    spec_mask = pd.Series([True] * len(df), index=df.index)
+    has_spec = False
+    if micron > 0:
+        micron_col = pd.to_numeric(df.get("Micron", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        spec_mask = spec_mask & (micron_col >= micron * 0.5) & (micron_col <= micron * 2.0)
+        has_spec = True
+    if max_temp > 0:
+        temp_col = pd.to_numeric(df.get("Max_Temp_F", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        spec_mask = spec_mask & (temp_col >= max_temp - 100) & (temp_col <= max_temp + 100)
+        has_spec = True
+    if max_psi > 0:
+        psi_col = pd.to_numeric(df.get("Max_PSI", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        spec_mask = spec_mask & (psi_col >= max_psi * 0.5) & (psi_col <= max_psi * 1.5)
+        has_spec = True
+
+    if has_spec:
+        results = _collect(spec_mask, "Similar Specs", max_per_category)
+        if results:
+            spec_desc_parts = []
+            if micron > 0:
+                spec_desc_parts.append(f"{micron} micron range")
+            if max_temp > 0:
+                spec_desc_parts.append(f"~{int(max_temp)}°F")
+            if max_psi > 0:
+                spec_desc_parts.append(f"~{int(max_psi)} PSI")
+            categories.append({
+                "name": "Similar Specs",
+                "desc": ", ".join(spec_desc_parts),
+                "products": results,
+            })
+
+    # Category 3: Same Product Type (broader — includes same manufacturer)
+    if product_type and product_type.lower() not in ("", "0", "nan"):
+        mask = df["Product_Type"].astype(str).str.lower() == product_type.lower()
+        results = _collect(mask, "Same Type", max_per_category)
+        if results:
+            categories.append({
+                "name": "Same Product Type",
+                "desc": product_type,
+                "products": results,
+            })
+
+    return {"source": source, "categories": categories}

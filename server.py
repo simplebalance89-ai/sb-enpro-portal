@@ -408,6 +408,146 @@ async def get_reports():
     return {"reports": [], "count": 0}
 
 
+class CompareSuggestRequest(BaseModel):
+    part_number: str
+
+
+@app.post("/api/compare-suggestions")
+async def compare_suggestions(req: CompareSuggestRequest):
+    """Find similar products grouped by category for smart comparison."""
+    if not state.data_loaded:
+        return JSONResponse(status_code=503, content={"error": "Data not loaded."})
+
+    from search import find_similar_products
+    result = find_similar_products(state.df, req.part_number)
+    return result
+
+
+class EmailReportRequest(BaseModel):
+    subject: str = "EnPro FM Portal — Report"
+    body: str = ""
+    reports: list = []
+
+
+@app.post("/api/email-report")
+async def email_report(req: EmailReportRequest):
+    """Email reports to Peter. Uses SMTP configured via environment variables."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host = settings.smtp_host if hasattr(settings, 'smtp_host') else ""
+    smtp_port = settings.smtp_port if hasattr(settings, 'smtp_port') else 587
+    smtp_user = settings.smtp_user if hasattr(settings, 'smtp_user') else ""
+    smtp_pass = settings.smtp_pass if hasattr(settings, 'smtp_pass') else ""
+    report_email = settings.report_email if hasattr(settings, 'report_email') else ""
+
+    if not all([smtp_host, smtp_user, smtp_pass, report_email]):
+        # Fallback: save to disk when SMTP not configured
+        import os
+        import json
+        email_log = os.path.join("data", "email_queue.json")
+        os.makedirs("data", exist_ok=True)
+        entry = {
+            "subject": req.subject,
+            "body": req.body,
+            "reports": req.reports,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "queued_no_smtp",
+        }
+        existing = []
+        if os.path.exists(email_log):
+            with open(email_log, "r") as f:
+                existing = json.load(f)
+        existing.append(entry)
+        with open(email_log, "w") as f:
+            json.dump(existing, f, indent=2)
+        return {"status": "queued", "message": "SMTP not configured. Report saved to queue."}
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = req.subject
+        msg["From"] = smtp_user
+        msg["To"] = report_email
+
+        # Build HTML body
+        html_parts = [
+            "<html><body>",
+            f"<h2>{req.subject}</h2>",
+        ]
+        if req.body:
+            html_parts.append(f"<p>{req.body}</p>")
+        if req.reports:
+            html_parts.append("<table border='1' cellpadding='8' cellspacing='0' style='border-collapse:collapse;'>")
+            html_parts.append("<tr><th>Part Number</th><th>Reason</th><th>Session</th><th>Time</th></tr>")
+            for r in req.reports:
+                html_parts.append(
+                    f"<tr><td>{r.get('part_number','')}</td>"
+                    f"<td>{r.get('reason','')}</td>"
+                    f"<td>{r.get('session_id','')[:8]}</td>"
+                    f"<td>{r.get('timestamp','')}</td></tr>"
+                )
+            html_parts.append("</table>")
+        html_parts.append("<br><p><em>— EnPro Filtration Mastermind</em></p></body></html>")
+
+        msg.attach(MIMEText("\n".join(html_parts), "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [report_email], msg.as_string())
+
+        return {"status": "sent", "to": report_email}
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+class QuoteRequest(BaseModel):
+    company: str = ""
+    contact_name: str = ""
+    contact_email: str = ""
+    contact_phone: str = ""
+    ship_to: str = ""
+    items: list = []  # [{part_number, description, quantity, price}]
+    notes: str = ""
+    session_id: str = ""
+
+
+@app.post("/api/quote")
+async def save_quote(req: QuoteRequest):
+    """Save a quote draft. Optionally emails to Peter."""
+    import os
+    import json
+
+    quote = {
+        "id": f"Q-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        "company": req.company,
+        "contact_name": req.contact_name,
+        "contact_email": req.contact_email,
+        "contact_phone": req.contact_phone,
+        "ship_to": req.ship_to,
+        "items": req.items,
+        "notes": req.notes,
+        "session_id": req.session_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "draft",
+    }
+
+    quotes_file = os.path.join("data", "quotes.json")
+    os.makedirs("data", exist_ok=True)
+    existing = []
+    if os.path.exists(quotes_file):
+        with open(quotes_file, "r") as f:
+            existing = json.load(f)
+    existing.append(quote)
+    with open(quotes_file, "w") as f:
+        json.dump(existing, f, indent=2)
+
+    logger.info(f"Quote saved: {quote['id']}")
+    return {"status": "saved", "quote": quote}
+
+
 @app.get("/widget.js")
 async def widget_js():
     """

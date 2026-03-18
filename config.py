@@ -29,7 +29,14 @@ class Settings(BaseSettings):
     HOST: str = Field(default="0.0.0.0", description="Server bind host")
     PORT: int = Field(default=8000, description="Server bind port")
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # SMTP / Email
+    smtp_host: str = Field(default="", alias="SMTP_HOST", description="SMTP server host")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT", description="SMTP server port")
+    smtp_user: str = Field(default="", alias="SMTP_USER", description="SMTP username")
+    smtp_pass: str = Field(default="", alias="SMTP_PASS", description="SMTP password")
+    report_email: str = Field(default="pwnetsuite@outlook.com", alias="REPORT_EMAIL", description="Report recipient email")
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "populate_by_name": True}
 
 
 @lru_cache()
