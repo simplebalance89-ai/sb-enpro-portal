@@ -979,4 +979,132 @@
         }
     });
 
+    // ── Voice Agent (Speech-to-Text + Text-to-Speech) ──
+    var micBtn = document.getElementById('micBtn');
+    var recognition = null;
+    var isListening = false;
+    var voiceSynth = window.speechSynthesis;
+    var lastInteractionWasVoice = false;
+
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    window.toggleVoice = function () {
+        if (!SpeechRecognition) {
+            appendMessage('bot', 'Voice input is not supported in this browser. Try Chrome or Edge.');
+            return;
+        }
+        if (isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    };
+
+    function startListening() {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.continuous = false;
+
+        isListening = true;
+        lastInteractionWasVoice = true;
+        micBtn.classList.add('listening');
+        userInput.placeholder = 'Listening...';
+
+        recognition.onresult = function (event) {
+            var transcript = '';
+            for (var i = event.resultIndex; i < event.results.length; i++) {
+                transcript += event.results[i][0].transcript;
+            }
+            userInput.value = transcript;
+            if (event.results[event.results.length - 1].isFinal) {
+                stopListening();
+                if (transcript.trim()) {
+                    handleSend();
+                }
+            }
+        };
+
+        recognition.onerror = function (event) {
+            console.error('Speech error:', event.error);
+            stopListening();
+            if (event.error === 'not-allowed') {
+                appendMessage('bot', 'Microphone access denied. Allow mic access in browser settings.');
+            }
+        };
+
+        recognition.onend = function () {
+            stopListening();
+        };
+
+        try {
+            recognition.start();
+        } catch (err) {
+            stopListening();
+        }
+    }
+
+    function stopListening() {
+        isListening = false;
+        micBtn.classList.remove('listening');
+        userInput.placeholder = 'Ask about a part, chemical, or product...';
+        if (recognition) {
+            try { recognition.stop(); } catch (e) {}
+            recognition = null;
+        }
+    }
+
+    // Text-to-Speech — read bot responses aloud
+    function speakResponse(text) {
+        if (!voiceSynth || !text) return;
+        voiceSynth.cancel();
+
+        var clean = text
+            .replace(/\*\*/g, '')
+            .replace(/\[V25 FILTERS\]/g, '')
+            .replace(/\[NO PRICE\]/g, 'no price available')
+            .replace(/\[NOT IN DATA\]/g, 'not in data')
+            .replace(/#{1,3}\s/g, '')
+            .replace(/\n/g, '. ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (clean.length > 500) {
+            clean = clean.substring(0, 500) + '. See results above for full details.';
+        }
+
+        var utterance = new SpeechSynthesisUtterance(clean);
+        utterance.lang = 'en-US';
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+
+        var voices = voiceSynth.getVoices();
+        var preferred = voices.find(function (v) {
+            return v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Zira');
+        });
+        if (preferred) utterance.voice = preferred;
+
+        voiceSynth.speak(utterance);
+    }
+
+    // Hook: speak bot response when voice was used
+    var origAppendMessage = appendMessage;
+    appendMessage = function (role, html) {
+        origAppendMessage(role, html);
+        if (role === 'bot' && lastInteractionWasVoice) {
+            var plainText = html.replace(/<[^>]+>/g, ' ').replace(/&[^;]+;/g, ' ').trim();
+            speakResponse(plainText);
+            lastInteractionWasVoice = false;
+        }
+    };
+
+    // Preload voices (Chrome needs this)
+    if (voiceSynth) {
+        voiceSynth.getVoices();
+        if (voiceSynth.onvoiceschanged !== undefined) {
+            voiceSynth.onvoiceschanged = function () { voiceSynth.getVoices(); };
+        }
+    }
+
 })();
