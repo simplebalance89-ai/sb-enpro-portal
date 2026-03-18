@@ -149,63 +149,35 @@
         }
     };
 
-    // Load first 3 products, then show "Show More" button for the rest
+    // Show suggestions as a consolidated list card — click any row to expand
     async function loadProductsStaggered(suggestions) {
-        var INITIAL_SHOW = 3;
-
-        // Show first 3 with stagger
-        for (var i = 0; i < Math.min(INITIAL_SHOW, suggestions.length); i++) {
+        if (suggestions.length === 1) {
+            // Single result — fetch full product card
             try {
                 var res = await fetch(API_BASE + '/api/lookup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ part_number: suggestions[i].Part_Number })
+                    body: JSON.stringify({ part_number: suggestions[0].Part_Number })
                 });
                 var data = await res.json();
                 if (data.found && data.product) {
-                    appendCard(renderProductCard(data.product), true);
+                    appendCard(renderProductCard(data.product), false);
+                    appendFollowUps(data.product.Part_Number || '');
                 }
             } catch (err) {
                 console.error('Product fetch error:', err);
             }
-            if (i < Math.min(INITIAL_SHOW, suggestions.length) - 1) {
-                await new Promise(function (resolve) { setTimeout(resolve, 400); });
-            }
-        }
-
-        // If more results exist, show "Show More" button
-        if (suggestions.length > INITIAL_SHOW) {
-            var remaining = suggestions.slice(INITIAL_SHOW);
-            var moreBtn = document.createElement('div');
-            moreBtn.className = 'msg bot';
-            moreBtn.innerHTML = '<div class="show-more-bar">' +
-                '<button class="show-more-btn" id="showMoreBtn">' +
-                remaining.length + ' more results — Show More</button>' +
-                '</div>';
-            chatArea.appendChild(moreBtn);
-            scrollToBottom();
-
-            document.getElementById('showMoreBtn').onclick = async function () {
-                moreBtn.remove();
-                for (var j = 0; j < remaining.length; j++) {
-                    try {
-                        var res2 = await fetch(API_BASE + '/api/lookup', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ part_number: remaining[j].Part_Number })
-                        });
-                        var data2 = await res2.json();
-                        if (data2.found && data2.product) {
-                            appendCard(renderProductCard(data2.product), true);
-                        }
-                    } catch (err2) {
-                        console.error('Product fetch error:', err2);
-                    }
-                    if (j < remaining.length - 1) {
-                        await new Promise(function (resolve) { setTimeout(resolve, 400); });
-                    }
-                }
-            };
+        } else {
+            // Multiple — show consolidated card, click to expand
+            appendCard(renderConsolidatedCard(
+                suggestions.map(function (s) {
+                    return {
+                        Part_Number: s.Part_Number,
+                        Description: s.Description || '',
+                        Final_Manufacturer: s.Manufacturer || ''
+                    };
+                })
+            ), true);
         }
     }
 
@@ -338,47 +310,56 @@
         scrollToBottom();
     };
 
-    // ── Render products: top 3 + Show More button ──
+    // ── Render products: 1 card if single, consolidated card if multiple ──
     async function renderProductsBatched(products) {
-        var BATCH = 3;
-
-        // Show first 3
-        for (var i = 0; i < Math.min(BATCH, products.length); i++) {
-            appendCard(renderProductCard(products[i]), products.length > 1);
-            if (products.length > 1 && i < Math.min(BATCH, products.length) - 1) {
-                await new Promise(function (r) { setTimeout(r, 400); });
-            }
-        }
-
-        // Follow-ups on the last shown card
-        var lastShown = products[Math.min(BATCH, products.length) - 1];
-        appendFollowUps(lastShown.Part_Number || lastShown.part_number || '');
-
-        // Show More button if there are more
-        if (products.length > BATCH) {
-            var remaining = products.slice(BATCH);
-            var btnId = 'showMore_' + Date.now();
-            var moreDiv = document.createElement('div');
-            moreDiv.className = 'msg bot';
-            moreDiv.innerHTML = '<div class="show-more-bar">' +
-                '<button class="show-more-btn" id="' + btnId + '">' +
-                'Show ' + remaining.length + ' more results</button>' +
-                '</div>';
-            chatArea.appendChild(moreDiv);
-            scrollToBottom();
-
-            document.getElementById(btnId).onclick = async function () {
-                moreDiv.remove();
-                for (var j = 0; j < remaining.length; j++) {
-                    appendCard(renderProductCard(remaining[j]), true);
-                    if (j < remaining.length - 1) {
-                        await new Promise(function (r) { setTimeout(r, 400); });
-                    }
-                }
-                appendFollowUps(remaining[remaining.length - 1].Part_Number || '');
-            };
+        if (products.length === 1) {
+            // Single result — full product card
+            appendCard(renderProductCard(products[0]), false);
+            appendFollowUps(products[0].Part_Number || products[0].part_number || '');
+        } else if (products.length > 1) {
+            // Multiple results — consolidated card with expandable rows
+            appendCard(renderConsolidatedCard(products), true);
         }
     }
+
+    // Consolidated card — one card, multiple products as rows
+    window.renderConsolidatedCard = function (products) {
+        var html = '<div class="product-card">';
+        html += '<div class="product-card-header">' + products.length + ' Results Found [V25 FILTERS]</div>';
+        html += '<div class="product-card-body" style="padding:0;">';
+
+        products.forEach(function (p, idx) {
+            var pn = p.Part_Number || p.part_number || '?';
+            var desc = p.Description || p.description || '';
+            var mfr = p.Final_Manufacturer || p.Manufacturer || p.manufacturer || '';
+            var price = p.Price || p.price || '';
+            var stock = p.Total_Stock || p.total_stock || 0;
+            var priceDisplay = (price && price !== 'Contact EnPro for pricing') ? price : '[NO PRICE]';
+            var stockDisplay = stock > 0 ? '<span style="color:var(--stock-green);font-weight:700;">' + stock + ' in stock</span>' : '<span style="color:var(--stock-red);">Out of stock</span>';
+
+            html += '<div class="consol-row" onclick="expandConsolRow(\'' + esc(pn) + '\', this)" style="cursor:pointer;">';
+            html += '<div class="consol-row-main">';
+            html += '<div class="consol-pn">' + esc(pn) + '</div>';
+            html += '<div class="consol-desc">' + esc(desc) + '</div>';
+            html += '</div>';
+            html += '<div class="consol-row-meta">';
+            if (mfr) html += '<span class="consol-mfr">' + esc(mfr) + '</span>';
+            html += '<span class="consol-price">' + priceDisplay + '</span>';
+            html += stockDisplay;
+            html += '</div>';
+            html += '</div>';
+        });
+
+        html += '</div></div>';
+        return html;
+    };
+
+    // Expand a consolidated row into a full card
+    window.expandConsolRow = function (partNumber, rowEl) {
+        rowEl.style.pointerEvents = 'none';
+        rowEl.style.opacity = '0.5';
+        sendMessage('lookup ' + partNumber);
+    };
 
     // ── Render product card ──
     window.renderProductCard = function (p) {
@@ -731,6 +712,7 @@
         var isReady = doneCount >= 3; // Part + 2 more = quote ready
 
         var html = '<div class="quote-tracker-inner">';
+        html += '<div class="qt-title">Quote Readiness Tracker</div>';
         html += '<div class="quote-tracker-part">' + esc(quoteState.part) + '</div>';
         html += '<div class="quote-tracker-steps">';
         steps.forEach(function (step) {

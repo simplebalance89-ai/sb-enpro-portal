@@ -773,6 +773,14 @@
             padding: 8px 16px;
             font-size: 12px;
         }
+        .qt-title {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--accent);
+            white-space: nowrap;
+        }
         .quote-tracker-part {
             font-weight: 700;
             color: var(--navy);
@@ -824,6 +832,36 @@
             .qt-step { font-size: 10px; }
             .action-grid { grid-template-columns: 1fr 1fr; }
         }
+        /* ── Consolidated Card Rows ── */
+        .consol-row {
+            padding: 10px 14px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.15s;
+        }
+        .consol-row:last-child { border-bottom: none; }
+        .consol-row:hover { background: var(--bg); }
+        .consol-row-main { margin-bottom: 4px; }
+        .consol-pn {
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--navy);
+        }
+        .consol-desc {
+            font-size: 12px;
+            color: var(--text-light);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .consol-row-meta {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            font-size: 12px;
+        }
+        .consol-mfr { color: var(--accent); font-weight: 500; }
+        .consol-price { font-weight: 600; }
+
         /* ── Card Action Buttons ── */
         .card-actions {
             display: flex;
