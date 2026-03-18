@@ -540,8 +540,27 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
         }
 
     elif intent == "compare":
-        result = search_products(df, clean_msg, max_results=10)
-        products = result.get("results", [])
+        # Split on "vs", "and", "versus", or comma to find individual parts
+        import re as _cmp_re
+        parts_to_compare = _cmp_re.split(r'\s+(?:vs\.?|versus|and|,)\s+', clean_msg, flags=_cmp_re.IGNORECASE)
+        parts_to_compare = [p.strip() for p in parts_to_compare if p.strip()]
+
+        products = []
+        if len(parts_to_compare) >= 2:
+            # Look up each part individually
+            for part_query in parts_to_compare[:5]:
+                found = lookup_part(df, part_query)
+                if found:
+                    products.append(found)
+                else:
+                    # Try search as fallback
+                    sr = search_products(df, part_query, max_results=1)
+                    if sr.get("results"):
+                        products.append(sr["results"][0])
+        else:
+            # Fallback: search the whole string
+            result = search_products(df, clean_msg, max_results=10)
+            products = result.get("results", [])
         if len(products) >= 2:
             # Build side-by-side comparison table
             spec_keys = ["Description", "Product_Type", "Final_Manufacturer", "Micron", "Media", "Max_Temp_F", "Max_PSI", "Flow_Rate", "Efficiency", "Price"]

@@ -298,6 +298,11 @@
             }
         }
 
+        // Auto-capture specs from returned products into context card
+        if (data.products && data.products.length > 0) {
+            updateContextFromProducts(data.products);
+        }
+
         // Handle different response shapes
         if (data.products && Array.isArray(data.products) && data.products.length > 0) {
             if (data.text || data.response) appendMessage('bot', formatMarkdown(data.text || data.response));
@@ -2499,6 +2504,22 @@
                 lane1.classList.remove('collapsed');
             }
         }
+    }
+
+    function updateContextFromProducts(products) {
+        if (!products || !products.length) return;
+        var p = products[0]; // Use first product's specs
+        if (p.Micron && !sessionContext.micron) sessionContext.micron = p.Micron + ' μm';
+        if (p.Max_Temp_F && !sessionContext.temperature) sessionContext.temperature = p.Max_Temp_F + '°F';
+        if (p.Max_PSI && !sessionContext.pressure) sessionContext.pressure = p.Max_PSI + ' PSI';
+        if (p.Flow_Rate && !sessionContext.flowRate) sessionContext.flowRate = String(p.Flow_Rate);
+        if (p.Media && !sessionContext.fluid && String(p.Media).toLowerCase() !== 'various') {
+            // Don't overwrite fluid with media — different concept
+        }
+        if (p.Product_Type && !sessionContext.industry) {
+            // Product type can hint at industry but don't overwrite
+        }
+        renderContextCard();
     }
 
     window.pinProduct = function (productData) {
