@@ -685,6 +685,13 @@
         </div>
         <div class="modal-body">
             <label id="modalLabel">Part Number</label>
+            <div class="lookup-mode-row" id="lookupModeRow" style="display:none; margin-bottom:10px;">
+                <select id="lookupMode" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; color:var(--text); cursor:pointer;">
+                    <option value="exact">Exact Match</option>
+                    <option value="starts_with">Starts With</option>
+                    <option value="contains">Contains</option>
+                </select>
+            </div>
             <input type="text" id="modalInput" placeholder="" autocomplete="off" onkeydown="if(event.key==='Enter')modalSubmit()">
             <div class="suggest-dropdown" id="suggestDropdown"></div>
             <div class="hint" id="modalHint"></div>

@@ -307,10 +307,14 @@ def lookup_part(df: pd.DataFrame, part_number: str) -> Optional[dict]:
     return None
 
 
-def suggest_parts(df: pd.DataFrame, query: str, max_results: int = 10) -> list:
+def suggest_parts(
+    df: pd.DataFrame, query: str, max_results: int = 10, mode: str = "exact"
+) -> list:
     """
-    Fast typeahead suggestions. Returns list of dicts with Part_Number and Description.
-    Priority: starts-with first, then contains. Always returns up to max_results.
+    Fast typeahead suggestions. Returns list of dicts with Part_Number, Description, Manufacturer.
+    mode: 'exact' (starts-with priority then contains), 'starts_with' (starts-with only),
+          'contains' (contains only).
+    Always returns up to max_results.
     """
     if df.empty or not query or len(query) < 2:
         return []
@@ -320,13 +324,8 @@ def suggest_parts(df: pd.DataFrame, query: str, max_results: int = 10) -> list:
     results = []
     seen = set()
 
-    # Phase 1: Part_Number starts with (highest priority)
-    for col in ["Part_Number", "Supplier_Code", "Alt_Code"]:
-        if col not in df.columns:
-            continue
-        col_norm = df[col].apply(_normalize)
-        matches = df[col_norm.str.startswith(norm_query, na=False)]
-        for _, row in matches.iterrows():
+    def _collect(matches_df):
+        for _, row in matches_df.iterrows():
             pn = str(row.get("Part_Number", ""))
             if pn and pn not in seen:
                 seen.add(pn)
@@ -334,36 +333,32 @@ def suggest_parts(df: pd.DataFrame, query: str, max_results: int = 10) -> list:
                 mfr = str(row.get("Final_Manufacturer", row.get("Manufacturer", "")))
                 results.append({"Part_Number": pn, "Description": desc, "Manufacturer": mfr})
                 if len(results) >= max_results:
-                    return results
+                    return True
+        return False
 
-    # Phase 2: Part_Number contains (lower priority)
-    for col in ["Part_Number", "Supplier_Code", "Alt_Code"]:
-        if col not in df.columns:
-            continue
-        col_norm = df[col].apply(_normalize)
-        matches = df[col_norm.str.contains(norm_query, na=False)]
-        for _, row in matches.iterrows():
-            pn = str(row.get("Part_Number", ""))
-            if pn and pn not in seen:
-                seen.add(pn)
-                desc = str(row.get("Description", ""))
-                mfr = str(row.get("Final_Manufacturer", row.get("Manufacturer", "")))
-                results.append({"Part_Number": pn, "Description": desc, "Manufacturer": mfr})
-                if len(results) >= max_results:
-                    return results
+    code_cols = ["Part_Number", "Supplier_Code", "Alt_Code"]
 
-    # Phase 3: Description contains
-    if "Description" in df.columns and len(results) < max_results:
-        desc_lower = df["Description"].astype(str).str.lower()
-        matches = df[desc_lower.str.contains(re.escape(query_lower), na=False)]
-        for _, row in matches.iterrows():
-            pn = str(row.get("Part_Number", ""))
-            if pn and pn not in seen:
-                seen.add(pn)
-                desc = str(row.get("Description", ""))
-                mfr = str(row.get("Final_Manufacturer", row.get("Manufacturer", "")))
-                results.append({"Part_Number": pn, "Description": desc, "Manufacturer": mfr})
-                if len(results) >= max_results:
-                    return results
+    # Starts-with phase (used by 'exact' and 'starts_with' modes)
+    if mode in ("exact", "starts_with"):
+        for col in code_cols:
+            if col not in df.columns:
+                continue
+            col_norm = df[col].apply(_normalize)
+            if _collect(df[col_norm.str.startswith(norm_query, na=False)]):
+                return results
+
+    # Contains phase (used by 'exact' and 'contains' modes)
+    if mode in ("exact", "contains"):
+        for col in code_cols:
+            if col not in df.columns:
+                continue
+            col_norm = df[col].apply(_normalize)
+            if _collect(df[col_norm.str.contains(norm_query, na=False)]):
+                return results
+
+        # Description contains
+        if "Description" in df.columns and len(results) < max_results:
+            desc_lower = df["Description"].astype(str).str.lower()
+            _collect(df[desc_lower.str.contains(re.escape(query_lower), na=False)])
 
     return results

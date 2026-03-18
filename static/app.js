@@ -104,21 +104,40 @@
     };
 
     // ── Direct lookup ──
-    window.doLookup = async function (partNumber) {
+    window.doLookup = async function (partNumber, mode) {
         if (isLoading) return;
+        mode = mode || 'exact';
 
+        var modeLabel = mode === 'starts_with' ? 'Starts with' : mode === 'contains' ? 'Contains' : 'Lookup';
         clearWelcome();
-        appendMessage('user', 'Lookup: ' + partNumber);
+        appendMessage('user', modeLabel + ': ' + partNumber);
         setLoading(true);
 
         try {
-            const res = await fetch(API_BASE + '/api/lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ part_number: partNumber, session_id: sessionId })
-            });
-            const data = await res.json();
-            handleResponse(data);
+            if (mode === 'exact') {
+                // Direct exact lookup
+                var res = await fetch(API_BASE + '/api/lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ part_number: partNumber, session_id: sessionId })
+                });
+                var data = await res.json();
+                handleResponse(data);
+            } else {
+                // Starts-with or contains — use suggest to get matches, then show as search results
+                var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(partNumber) + '&mode=' + mode);
+                var data = await res.json();
+                var suggestions = data.suggestions || [];
+                if (suggestions.length === 0) {
+                    appendMessage('bot', 'No products found ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + esc(partNumber) + '".\nContact: service@enproinc.com | 1 (800) 323-2416');
+                } else {
+                    appendMessage('bot', formatMarkdown('Found **' + suggestions.length + '** matches ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + partNumber + '" [V25 FILTERS]:'));
+                    suggestions.forEach(function (s) {
+                        // Do a full lookup for each to get the product card
+                        fetchAndShowProduct(s.Part_Number);
+                    });
+                }
+            }
         } catch (err) {
             appendMessage('bot', 'Lookup failed. Please try again.');
             console.error('Lookup error:', err);
@@ -126,6 +145,23 @@
             setLoading(false);
         }
     };
+
+    // Fetch a single product and render its card
+    async function fetchAndShowProduct(partNumber) {
+        try {
+            var res = await fetch(API_BASE + '/api/lookup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ part_number: partNumber })
+            });
+            var data = await res.json();
+            if (data.found && data.product) {
+                appendCard(renderProductCard(data.product));
+            }
+        } catch (err) {
+            console.error('Product fetch error for ' + partNumber + ':', err);
+        }
+    }
 
     // ── Search ──
     window.doSearch = async function (query) {
@@ -534,16 +570,22 @@
     }
 
     // ── Modal management ──
+    var lookupModeRow = document.getElementById('lookupModeRow');
+    var lookupMode = document.getElementById('lookupMode');
+
     window.showModal = function (type) {
         currentModalType = type;
         modalOverlay.classList.add('active');
+
+        // Show/hide lookup mode selector
+        lookupModeRow.style.display = type === 'lookup' ? 'block' : 'none';
 
         switch (type) {
             case 'lookup':
                 modalTitle.textContent = 'Lookup Part';
                 modalLabel.textContent = 'Part Number';
                 modalInput.placeholder = 'e.g., EPF-1234';
-                modalHint.textContent = 'Enter the exact part number to look up.';
+                updateLookupHint();
                 break;
             case 'chemical':
                 modalTitle.textContent = 'Chemical Compatibility';
@@ -563,6 +605,25 @@
         setTimeout(function () { modalInput.focus(); }, 100);
     };
 
+    function updateLookupHint() {
+        var mode = lookupMode.value;
+        if (mode === 'exact') {
+            modalHint.textContent = 'Enter the exact part number to look up.';
+        } else if (mode === 'starts_with') {
+            modalHint.textContent = 'Enter the beginning of a part number. Shows top 10 matches.';
+        } else {
+            modalHint.textContent = 'Enter any text contained in the part number. Shows top 10 matches.';
+        }
+    }
+
+    lookupMode.addEventListener('change', function () {
+        updateLookupHint();
+        // Re-trigger suggestions if there's text
+        if (modalInput.value.trim().length >= 2) {
+            modalInput.dispatchEvent(new Event('input'));
+        }
+    });
+
     window.hideModal = function (e) {
         if (e && e.target !== modalOverlay) return;
         modalOverlay.classList.remove('active');
@@ -574,10 +635,11 @@
         if (!val) return;
 
         var type = currentModalType;
+        var mode = lookupMode.value;
         hideModal();
 
         switch (type) {
-            case 'lookup': doLookup(val); break;
+            case 'lookup': doLookup(val, mode); break;
             case 'chemical': doChemical(val); break;
             case 'search': doSearch(val); break;
         }
@@ -647,7 +709,8 @@
         suggestDropdown.classList.add('active');
 
         try {
-            var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(query));
+            var mode = lookupMode.value || 'exact';
+            var res = await fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(query) + '&mode=' + mode);
             var data = await res.json();
             suggestItems = data.suggestions || [];
 
@@ -683,12 +746,13 @@
 
     function selectSuggestion(item) {
         if (!item) return;
-        modalInput.value = item.Part_Number;
         suggestDropdown.classList.remove('active');
         suggestDropdown.innerHTML = '';
         suggestSelectedIndex = -1;
-        // Auto-submit the lookup
-        modalSubmit();
+        // Always do exact lookup when clicking a specific suggestion
+        var type = currentModalType;
+        hideModal();
+        doLookup(item.Part_Number, 'exact');
     }
 
     // Close dropdown when clicking outside
