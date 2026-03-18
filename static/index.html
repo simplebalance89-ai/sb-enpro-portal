@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>EnPro Filtration Mastermind</title>
+    <style>
+        :root {
+            --navy: #003366;
+            --accent: #0066CC;
+            --bg: #f5f5f5;
+            --card-bg: #ffffff;
+            --stock-green: #28a745;
+            --stock-red: #D83B01;
+            --stock-orange: #e67e22;
+            --purple: #6B2D8B;
+            --text: #333333;
+            --text-light: #666666;
+            --border: #e0e0e0;
+            --shadow: 0 2px 8px rgba(0,0,0,0.1);
+            --radius: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: var(--navy);
+            color: white;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        .header-logo {
+            width: 36px; height: 36px;
+            background: white;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 14px; color: var(--navy);
+            flex-shrink: 0;
+        }
+        .header-title { font-size: 18px; font-weight: 600; }
+        .header-sub { font-size: 12px; opacity: 0.7; }
+
+        /* ── Quick Actions Bar ── */
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            padding: 10px 16px;
+            background: white;
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+            flex-shrink: 0;
+            -webkit-overflow-scrolling: touch;
+        }
+        .quick-actions::-webkit-scrollbar { display: none; }
+        .qa-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--navy);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+        .qa-btn:hover { background: var(--navy); color: white; border-color: var(--navy); }
+        .qa-btn:active { transform: scale(0.96); }
+        .qa-icon { font-size: 16px; }
+
+        /* ── Chat Area ── */
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+
+        .msg {
+            max-width: 85%;
+            animation: msgIn 0.2s ease-out;
+        }
+        @keyframes msgIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .msg.user {
+            align-self: flex-end;
+        }
+        .msg.bot {
+            align-self: flex-start;
+        }
+        .msg-bubble {
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        .msg.user .msg-bubble {
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+        .msg.bot .msg-bubble {
+            background: var(--card-bg);
+            color: var(--text);
+            border-bottom-left-radius: 2px;
+            box-shadow: var(--shadow);
+        }
+        .msg-time {
+            font-size: 11px;
+            color: var(--text-light);
+            margin-top: 4px;
+            padding: 0 4px;
+        }
+        .msg.user .msg-time { text-align: right; }
+
+        /* ── Typing Indicator ── */
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            padding: 12px 16px;
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+        .typing-indicator.active { display: flex; gap: 4px; align-items: center; }
+        .typing-dot {
+            width: 8px; height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typingBounce {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        /* ── Product Card ── */
+        .product-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            margin: 4px 0;
+            max-width: 100%;
+        }
+        .product-card-header {
+            background: var(--navy);
+            color: white;
+            padding: 10px 14px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .product-card-body {
+            padding: 12px 14px;
+        }
+        .product-field {
+            display: flex;
+            padding: 6px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+        }
+        .product-field:last-child { border-bottom: none; }
+        .product-field-label {
+            font-weight: 600;
+            color: var(--text-light);
+            min-width: 120px;
+            flex-shrink: 0;
+        }
+        .product-field-value {
+            color: var(--text);
+        }
+
+        /* Stock Section */
+        .stock-section {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 2px solid var(--bg);
+        }
+        .stock-title {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: var(--text);
+        }
+        .stock-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+        .stock-row.in-stock { background: rgba(40,167,69,0.08); }
+        .stock-row.low-stock { background: rgba(230,126,34,0.08); }
+        .stock-qty {
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+        .stock-qty.green { background: var(--stock-green); color: white; }
+        .stock-qty.orange { background: var(--stock-orange); color: white; }
+        .stock-qty.red { background: var(--stock-red); color: white; }
+
+        /* Price */
+        .product-price {
+            margin-top: 8px;
+            padding: 8px 12px;
+            background: var(--bg);
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .product-price.has-price { color: var(--stock-green); }
+        .product-price.no-price { color: var(--text-light); font-weight: 400; font-style: italic; }
+
+        /* Product Footer */
+        .product-footer {
+            padding: 8px 14px;
+            background: var(--bg);
+            font-size: 11px;
+            color: var(--text-light);
+            text-align: center;
+            border-top: 1px solid var(--border);
+        }
+
+        /* ── Follow-up Buttons ── */
+        .followup-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 0 4px;
+        }
+        .followup-btn {
+            padding: 6px 12px;
+            background: white;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .followup-btn:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* ── Chemical Card ── */
+        .chemical-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            margin: 4px 0;
+        }
+        .chemical-card-header {
+            background: var(--purple);
+            color: white;
+            padding: 10px 14px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .chemical-card-body { padding: 12px 14px; }
+        .compat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            font-size: 13px;
+        }
+        .compat-row.compatible { background: rgba(40,167,69,0.08); }
+        .compat-row.not-compatible { background: rgba(216,59,1,0.08); }
+        .compat-row.limited { background: rgba(230,126,34,0.08); }
+        .compat-badge {
+            font-weight: 600;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 10px;
+            color: white;
+            text-transform: uppercase;
+        }
+        .compat-badge.green { background: var(--stock-green); }
+        .compat-badge.red { background: var(--stock-red); }
+        .compat-badge.orange { background: var(--stock-orange); }
+
+        /* ── Table Card ── */
+        .table-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            margin: 4px 0;
+        }
+        .table-card-header {
+            background: var(--navy);
+            color: white;
+            padding: 10px 14px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .table-card table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .table-card th {
+            background: var(--bg);
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text);
+            border-bottom: 2px solid var(--border);
+        }
+        .table-card td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .table-card tr:nth-child(even) td { background: #fafafa; }
+        .table-card-wrapper { overflow-x: auto; }
+
+        /* ── Input Area ── */
+        .input-area {
+            padding: 12px 16px;
+            background: white;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+            flex-shrink: 0;
+        }
+        .input-area textarea {
+            flex: 1;
+            resize: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.4;
+            max-height: 100px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .input-area textarea:focus { border-color: var(--accent); }
+        .input-area textarea::placeholder { color: #aaa; }
+        .send-btn {
+            width: 42px; height: 42px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.15s, transform 0.1s;
+        }
+        .send-btn:hover { background: var(--navy); }
+        .send-btn:active { transform: scale(0.92); }
+        .send-btn:disabled { background: #ccc; cursor: default; }
+        .send-btn svg { width: 20px; height: 20px; }
+
+        /* ── Modals ── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            overflow: hidden;
+            animation: modalIn 0.2s ease-out;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .modal-header {
+            background: var(--navy);
+            color: white;
+            padding: 14px 18px;
+            font-weight: 600;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-close {
+            background: none; border: none; color: white;
+            font-size: 22px; cursor: pointer; padding: 0 4px;
+            line-height: 1;
+        }
+        .modal-body {
+            padding: 18px;
+        }
+        .modal-body label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text);
+        }
+        .modal-body input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+        }
+        .modal-body input:focus { border-color: var(--accent); }
+        .modal-body .hint {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+        .modal-footer {
+            padding: 12px 18px;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            border-top: 1px solid var(--border);
+        }
+        .modal-btn {
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.15s;
+        }
+        .modal-btn.primary {
+            background: var(--accent);
+            color: white;
+        }
+        .modal-btn.primary:hover { background: var(--navy); }
+        .modal-btn.secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        /* ── Welcome Message ── */
+        .welcome {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--text-light);
+        }
+        .welcome-icon {
+            width: 60px; height: 60px;
+            background: var(--navy);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 28px;
+        }
+        .welcome h2 {
+            font-size: 18px;
+            color: var(--text);
+            margin-bottom: 6px;
+        }
+        .welcome p {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* ── Numbered Options ── */
+        .numbered-options {
+            margin-top: 8px;
+        }
+        .numbered-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 13px;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        .numbered-option:hover { color: var(--accent); }
+        .option-num {
+            background: var(--accent);
+            color: white;
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        /* ── Markdown in bot messages ── */
+        .msg.bot .msg-bubble strong { font-weight: 700; }
+        .msg.bot .msg-bubble em { font-style: italic; }
+        .msg.bot .msg-bubble ul, .msg.bot .msg-bubble ol {
+            margin: 6px 0 6px 20px;
+        }
+        .msg.bot .msg-bubble li { margin: 2px 0; }
+        .msg.bot .msg-bubble p { margin: 4px 0; }
+        .msg.bot .msg-bubble code {
+            background: var(--bg);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 480px) {
+            .header { padding: 10px 14px; }
+            .header-title { font-size: 16px; }
+            .chat-area { padding: 12px; }
+            .msg { max-width: 92%; }
+            .product-field { flex-direction: column; gap: 2px; }
+            .product-field-label { min-width: unset; }
+            .input-area { padding: 10px 12px; }
+            .quick-actions { padding: 8px 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <div class="header-logo">EP</div>
+    <div>
+        <div class="header-title">Filtration Mastermind</div>
+        <div class="header-sub">EnPro Inc. Product Intelligence</div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="quick-actions">
+    <button class="qa-btn" onclick="showModal('lookup')">
+        <span class="qa-icon">&#128269;</span> Lookup Part
+    </button>
+    <button class="qa-btn" onclick="showModal('chemical')">
+        <span class="qa-icon">&#9879;</span> Chemical Check
+    </button>
+    <button class="qa-btn" onclick="showModal('search')">
+        <span class="qa-icon">&#128196;</span> Search Products
+    </button>
+    <button class="qa-btn" onclick="sendMessage('Pregame — give me a full briefing for today')">
+        <span class="qa-icon">&#127919;</span> Pregame
+    </button>
+</div>
+
+<!-- Chat Area -->
+<div class="chat-area" id="chatArea">
+    <div class="welcome">
+        <div class="welcome-icon">&#9881;</div>
+        <h2>Welcome to Filtration Mastermind</h2>
+        <p>Your AI-powered filtration product assistant.<br>
+        Ask about parts, chemicals, specs, or use the quick actions above.</p>
+    </div>
+</div>
+
+<!-- Typing Indicator -->
+<div class="typing-indicator" id="typingIndicator">
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+</div>
+
+<!-- Input -->
+<div class="input-area">
+    <textarea id="userInput" rows="1" placeholder="Ask about a part, chemical, or product..."
+        onkeydown="handleKeyDown(event)" oninput="autoGrow(this)"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="handleSend()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+        </svg>
+    </button>
+</div>
+
+<!-- Modal Overlay -->
+<div class="modal-overlay" id="modalOverlay" onclick="hideModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span id="modalTitle">Lookup</span>
+            <button class="modal-close" onclick="hideModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <label id="modalLabel">Part Number</label>
+            <input type="text" id="modalInput" placeholder="" onkeydown="if(event.key==='Enter')modalSubmit()">
+            <div class="hint" id="modalHint"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="modal-btn secondary" onclick="hideModal()">Cancel</button>
+            <button class="modal-btn primary" onclick="modalSubmit()">Go</button>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
