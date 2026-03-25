@@ -153,6 +153,31 @@ lookup, price, compare, manufacturer, chemical, pregame, application, quote read
 service@enproinc.com | 1 (800) 323-2416
 """
 
+PREGAME_SYSTEM_PROMPT = """You are the EnPro Filtration Mastermind — pre-call meeting prep specialist.
+
+When a user says "pregame" followed by a customer, application, industry, or product type, generate a concise pre-call game plan.
+
+FORMAT (always use this exact 5-bullet structure):
+
+1. **Customer Focus:** What this customer/industry likely cares about — their pain points, what keeps them up at night, what drives their purchasing decisions.
+
+2. **Lead Product:** The #1 product recommendation from the catalog data provided. Include the part number, brief description, and price. If no price, say "Contact EnPro for pricing."
+
+3. **Talking Points:** 2-3 specific things to mention in the meeting. Be concrete — reference actual products, specs, or application knowledge. No generic filler.
+
+4. **Key Question:** The one closing question to ask that moves the deal forward. Make it specific to their application.
+
+5. **Watch Out:** Any gotchas, escalation triggers, or things that could go sideways. Common issues for this application/industry.
+
+RULES:
+- ONLY cite products and specs from the [RELEVANT PRODUCTS FROM CATALOG] data provided.
+- ONLY cite application knowledge from the [KB SECTION CONTEXT] provided.
+- If no products match, say so and recommend contacting EnPro.
+- Keep it to 5 bullets. No walls of text. This is a quick prep sheet a salesperson reads in 2 minutes before a call.
+- Numbered lists only. No bullets, dashes, or symbols.
+- End with: "For additional information: EnPro Inc — service@enproinc.com | 1 (800) 323-2416"
+"""
+
 CHEMICAL_SYSTEM_PROMPT = """You are the EnPro Filtration Mastermind — chemical compatibility specialist.
 
 EVERY chemical question MUST have A/B/C/D ratings for ALL of these materials:
@@ -309,14 +334,18 @@ KB_SECTION_MAP = {
 
 
 def _lookup_kb_section(topic: str) -> Optional[str]:
-    """Look up KB section for a topic. Returns context string or None."""
+    """Look up KB section for a topic. Returns context string or None.
+
+    IMPORTANT: Never expose section numbers to the user. Only provide
+    the application knowledge and product recommendations as context.
+    """
     topic_lower = topic.lower()
     for keyword, (section, title, products) in KB_SECTION_MAP.items():
         if keyword in topic_lower:
             return (
-                f"[KB REFERENCE] Section {section}: {title}\n"
-                f"Key Products: {products}\n"
-                f"RULE: Cite this KB section in your response."
+                f"[KB SECTION CONTEXT] Application: {title}\n"
+                f"Recommended Products: {products}\n"
+                f"RULE: Use this knowledge to inform your response but NEVER show section numbers, KB references, or internal labels to the user."
             )
     return None
 
@@ -805,6 +834,8 @@ async def _handle_gpt(
             chem_info = _search_chemical_crosswalk(message, chemicals_df)
             if chem_info:
                 context_parts.append(f"[CHEMICAL CROSSWALK DATA]:\n{chem_info}")
+    elif intent == "pregame":
+        system_prompt = PREGAME_SYSTEM_PROMPT
     else:
         system_prompt = REASONING_SYSTEM_PROMPT
 
@@ -1008,8 +1039,23 @@ def _format_product_response(product: dict) -> str:
         lines.append(f"{n}. **Stock:** Out of stock — contact EnPro for lead time")
     n += 1
 
-    lines.append(f"\nNeed a quote or want to compare alternatives?")
-    lines.append(f"Contact: service@enproinc.com | 1 (800) 323-2416")
+    # Contextual numbered follow-ups (V5 style)
+    mfg = product.get("Final_Manufacturer", "")
+    micron = product.get("Micron", "")
+    lines.append("")
+    lines.append(f"{n}. See compatible housings for {pn}")
+    n += 1
+    if mfg and micron:
+        lines.append(f"{n}. Compare to other {micron} micron {mfg} elements")
+    elif mfg:
+        lines.append(f"{n}. Show more {mfg} products")
+    else:
+        lines.append(f"{n}. Compare to similar products")
+    n += 1
+    lines.append(f"{n}. Check chemical compatibility")
+    n += 1
+    lines.append(f"{n}. Pregame a meeting with this product")
+    lines.append(f"\nFor additional information: EnPro Inc — service@enproinc.com | 1 (800) 323-2416")
     return "\n".join(lines)
 
 
@@ -1036,5 +1082,20 @@ def _format_search_response(result: dict) -> str:
 
     if total > 10:
         lines.append(f"\n{total - 10} more results available. Want me to narrow it down?")
+
+    # Numbered follow-ups
+    first_pn = products[0].get("Part_Number", "part") if products else "part"
+    first_mfg = products[0].get("Final_Manufacturer", "") if products else ""
+    lines.append("")
+    lines.append(f"1. Lookup {first_pn} in detail")
+    if len(products) >= 2:
+        second_pn = products[1].get("Part_Number", "part")
+        lines.append(f"2. Compare {first_pn} vs {second_pn}")
+    elif first_mfg:
+        lines.append(f"2. Show more {first_mfg} products")
+    else:
+        lines.append(f"2. Compare products")
+    lines.append(f"3. Check chemical compatibility")
+    lines.append(f"\nFor additional information: EnPro Inc — service@enproinc.com | 1 (800) 323-2416")
 
     return "\n".join(lines)
