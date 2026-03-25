@@ -470,16 +470,10 @@
         chatArea.innerHTML = '';
         // Restore welcome
         chatArea.innerHTML = '<div class="welcome">' +
-            '<div class="welcome-icon">&#9881;</div>' +
-            '<h2>Welcome to Filtration Mastermind</h2>' +
-            '<p>Your AI-powered filtration product assistant.<br>' +
-            '19,600+ validated products. Real-time inventory. John\'s 30 years of expertise.</p>' +
-            '<button onclick="startSimulate()" style="margin-top:20px; padding:16px 36px; background:linear-gradient(135deg, #003366, #0066CC); color:white; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; box-shadow:0 4px 16px rgba(0,102,204,0.3); font-family:inherit;">&#9654;&nbsp; See What AI Can Do</button>' +
-            '<p style="margin-top:10px; font-size:12px; color:var(--text-light);">14-step live demo with real data</p>' +
-            '<div style="margin-top:16px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">' +
-            '<button onclick="openPregamePicker()" style="padding:10px 20px; background:white; color:var(--navy); border:2px solid var(--navy); border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">&#127919; Meeting Pregame</button>' +
-            '<button onclick="sendMessage(\'help\')" style="padding:10px 20px; background:white; color:var(--text-light); border:1px solid var(--border); border-radius:8px; font-size:14px; cursor:pointer; font-family:inherit;">&#10067; Help</button>' +
-            '</div>' +
+            '<div class="welcome-icon" style="font-size:48px;">&#128270;</div>' +
+            '<h2>Filtration Mastermind</h2>' +
+            '<p style="font-size:16px; line-height:1.6;">Just ask. Look up a part, prep for a meeting, compare products, check chemical compatibility — type it like you\'d say it.</p>' +
+            '<p style="margin-top:8px; font-size:13px; color:var(--text-light);">19,600+ validated products. Real-time inventory. Real prices.</p>' +
             '</div>';
         // Reset state
         searchCount = 0;
