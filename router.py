@@ -141,7 +141,7 @@ Escalation response: "Contact EnPro. service@enproinc.com / 1 (800) 323-2416."
 2. Every response scannable in 5 seconds — lead with the answer
 3. If response exceeds 8 lines, stage it — core answer first, offer to expand
 4. Data labels:  for catalog data, [NOT IN DATA] for missing fields, [NO PRICE] for $0/blank prices
-5. For pregame/application: cite KB section number
+5. For pregame/application: use KB knowledge but do NOT show KB section numbers to the user
 
 ## FOLLOW-UP
 
@@ -848,6 +848,9 @@ async def _handle_gpt(
         # Anti-hallucination: validate part numbers in response against catalog
         response = _validate_response_parts(response, search_result.get("results", []), df)
 
+        # Strip internal KB references from user-facing output
+        response = _strip_kb_references(response)
+
         return {
             "response": response,
             "intent": intent,
@@ -885,6 +888,22 @@ def _search_chemical_crosswalk(message: str, chemicals_df: pd.DataFrame) -> Opti
     if results:
         return json.dumps(results, indent=2, default=str)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Strip internal references from user-facing output
+# ---------------------------------------------------------------------------
+
+def _strip_kb_references(response: str) -> str:
+    """Remove KB section references (e.g., 'KB 8.2', 'per KB 5.1') from GPT output."""
+    import re as _re
+    if not response:
+        return response
+    # Remove patterns like "KB 8.2", "KB Section 8.2", "(KB 8.2)", "per KB 5.1"
+    response = _re.sub(r'\s*\(?\s*(?:per\s+)?KB\s+(?:Section\s+)?\d+(?:\.\d+)?\s*\)?\s*', ' ', response)
+    # Clean up double spaces left behind
+    response = _re.sub(r'  +', ' ', response)
+    return response.strip()
 
 
 # ---------------------------------------------------------------------------

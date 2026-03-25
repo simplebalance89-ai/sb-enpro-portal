@@ -272,75 +272,76 @@ async def suggest(q: str = "", mode: str = "exact", in_stock: str = "all"):
 
 @app.get("/api/manufacturers/list")
 async def manufacturers_list():
-    """Return deduplicated manufacturer list. Prefers Product_Group_Description (clean P21 codes)."""
-    if not state.data_loaded or state.df.empty:
-        return {"manufacturers": []}
-
-    import re as _re
-
-    # Prefer Manufacturer_Display (mapped from Product_Group) over raw names
-    col = "Manufacturer_Display" if "Manufacturer_Display" in state.df.columns else (
-        "Product_Group_Description" if "Product_Group_Description" in state.df.columns else (
-            "Final_Manufacturer" if "Final_Manufacturer" in state.df.columns else "Manufacturer"
-        )
-    )
-    if col not in state.df.columns:
-        return {"manufacturers": []}
-
-    raw = (
-        state.df[col]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .loc[lambda s: (s != "") & (s != "0")]
-        .unique()
-        .tolist()
-    )
-
-    # Filter out garbage entries
-    do_not_use = _re.compile(r'\*.*DO NOT USE.*\*|DO NOT USE|Default Vendor', _re.IGNORECASE)
-    raw = [m for m in raw if not do_not_use.search(m) and len(m) > 1]
-
-    # Deduplicate: normalize by stripping Inc/Corp/LLC/Ltd/Co suffixes + punctuation
-    def _norm_mfr(name):
-        n = name.lower().strip()
-        n = _re.sub(r'[,.\s]+(inc|corp|corporation|llc|ltd|co|incorporated)\.?$', '', n)
-        n = _re.sub(r'\s+', ' ', n).strip()
-        return n
-
-    # Group by normalized name, keep the longest (most complete) variant
-    groups = {}
-    for m in raw:
-        key = _norm_mfr(m)
-        if key not in groups or len(m) > len(groups[key]):
-            groups[key] = m
-
-    manufacturers = sorted(groups.values(), key=str.lower)
-    return {"manufacturers": manufacturers, "count": len(manufacturers), "raw_count": len(raw)}
+    """Return curated manufacturer list for dropdowns."""
+    # Curated list of key filtration manufacturers — clean, no dupes, no junk
+    CURATED_MANUFACTURERS = sorted([
+        "AAF",
+        "Accelerated Production",
+        "AJR Filtration Inc.",
+        "American Filter Manufacturing Inc.",
+        "Amiad Filtration Systems",
+        "Andronaco/Hills McCanna",
+        "Andronaco/Pureflex",
+        "Atlas Copco Compressors",
+        "Banner Industries",
+        "Brabazon",
+        "Capsule Technologies",
+        "Cobetter",
+        "Critical Process Filtration Inc",
+        "Edmac Compressor Parts",
+        "Enpro, Incorporated",
+        "Filtrox North America Inc.",
+        "Filtrafine Corporation",
+        "FTC-Filtration Technology",
+        "Global Filter LLC",
+        "Graver Technologies",
+        "Industrial Technologies & Services Americas (PPC)",
+        "Islip Flow Controls Inc.",
+        "Johnson Filtration",
+        "Jonell Filtration Group",
+        "Koch Filter Corporation",
+        "Le Sac Corporation",
+        "M & M Control Service Inc",
+        "McMaster-Carr Supply Co.",
+        "National Oilwell Varco L.P.",
+        "Pall",
+        "Pall Trincor",
+        "Pentair Filtration",
+        "Porvair Filtration Group Inc",
+        "PowerFlow Fluid Systems LLC",
+        "Pulsafeeder Inc NY",
+        "Quincy Compressor LLC",
+        "Rosedale Products Inc",
+        "Saint Gobain Performance",
+        "Schroeder Industries",
+        "Shelco Filters",
+        "Sunsource",
+        "Swift Filters Inc.",
+        "United Filtration Systems",
+        "Weber Scientific",
+    ])
+    return {"manufacturers": CURATED_MANUFACTURERS, "count": len(CURATED_MANUFACTURERS)}
 
 
 @app.get("/api/product-types/list")
 async def product_types_list():
-    """Return list of unique product types for dropdown. Pandas only, $0 cost."""
-    if not state.data_loaded or state.df.empty:
-        return {"product_types": []}
-
-    col = "Product_Type_Display" if "Product_Type_Display" in state.df.columns else (
-        "Product_Type" if "Product_Type" in state.df.columns else None
-    )
-    if not col:
-        return {"product_types": []}
-
-    product_types = sorted(
-        state.df[col]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .loc[lambda s: s != ""]
-        .unique()
-        .tolist()
-    )
-    return {"product_types": product_types}
+    """Return curated filtration product types for dropdown."""
+    # Curated list — filters only, no non-filtration items, consolidated dupes
+    CURATED_PRODUCT_TYPES = sorted([
+        "Air Filter",
+        "Bag Filter",
+        "Bags",
+        "Capsule Filter",
+        "Cartridges",
+        "Compressor/Filter",
+        "Depth Sheets",
+        "Elements",
+        "Filters (General)",
+        "Housings",
+        "Membranes",
+        "Screens / Separators",
+    ])
+    return {"product_types": CURATED_PRODUCT_TYPES}
 
 
 @app.get("/api/chemicals/list")

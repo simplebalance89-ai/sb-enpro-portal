@@ -201,6 +201,16 @@
     window.sendMessage = async function (text) {
         if (isLoading) return;
 
+        // Number shortcut: typing "1"-"4" clicks the corresponding action card
+        var trimmed = text.trim();
+        if (/^[1-4]$/.test(trimmed)) {
+            var actionCard = document.querySelector('.action-card[data-action-num="' + trimmed + '"]:not(.action-done)');
+            if (actionCard) {
+                actionCard.click();
+                return;
+            }
+        }
+
         clearWelcome();
         appendMessage('user', text);
         parseAndUpdateContext(text);
@@ -970,23 +980,23 @@
         panel.innerHTML = '<div class="action-panel" id="' + panelId + '">' +
             '<div class="action-panel-header">Next Steps for ' + esc(partNumber) + '</div>' +
             '<div class="action-grid">' +
-                '<div class="action-card" onclick="runAction(\'chemical\', \'' + esc(partNumber) + '\', this)">' +
-                    '<div class="action-icon">&#9879;</div>' +
+                '<div class="action-card" onclick="runAction(\'chemical\', \'' + esc(partNumber) + '\', this)" data-action-num="1">' +
+                    '<div class="action-num">1</div>' +
                     '<div class="action-label">Chemical Check</div>' +
                     '<div class="action-desc">Material compatibility</div>' +
                 '</div>' +
-                '<div class="action-card" onclick="showCompareForm(\'' + esc(partNumber) + '\', \'' + panelId + '\')">' +
-                    '<div class="action-icon">&#9878;</div>' +
+                '<div class="action-card" onclick="showCompareForm(\'' + esc(partNumber) + '\', \'' + panelId + '\')" data-action-num="2">' +
+                    '<div class="action-num">2</div>' +
                     '<div class="action-label">Compare</div>' +
                     '<div class="action-desc">Side-by-side with another part</div>' +
                 '</div>' +
-                '<div class="action-card" onclick="runAction(\'similar\', \'' + esc(partNumber) + '\', this)">' +
-                    '<div class="action-icon">&#128260;</div>' +
+                '<div class="action-card" onclick="runAction(\'similar\', \'' + esc(partNumber) + '\', this)" data-action-num="3">' +
+                    '<div class="action-num">3</div>' +
                     '<div class="action-label">Similar Parts</div>' +
                     '<div class="action-desc">Find alternatives</div>' +
                 '</div>' +
-                '<div class="action-card" onclick="runAction(\'manufacturer\', \'' + esc(partNumber) + '\', this)">' +
-                    '<div class="action-icon">&#127981;</div>' +
+                '<div class="action-card" onclick="runAction(\'manufacturer\', \'' + esc(partNumber) + '\', this)" data-action-num="4">' +
+                    '<div class="action-num">4</div>' +
                     '<div class="action-label">Manufacturer</div>' +
                     '<div class="action-desc">More from this brand</div>' +
                 '</div>' +
@@ -1360,6 +1370,8 @@
         text = text.replace(/\[NOT IN DATA\]/g, '');
         text = text.replace(/\[NO PRICE\]/g, '');
         text = text.replace(/\[CRITICAL DATA INTEGRITY RULE\][\s\S]*?\[USER MESSAGE\]:/g, '');
+        // Strip follow-up option lines that GPT includes as text
+        text = text.replace(/^.*(?:Pre-Call Prep|quote ready|lookup|price|compare|manufacturer|chemical|pregame|application)[,\s]*(?:quote ready|help|lookup|price|compare|manufacturer|chemical|pregame|application)[,\s]*(?:help)?\.?\s*$/gim, '');
         // Clean up stray markdown artifacts
         text = text.replace(/^\s*[-•–]\s*/gm, '');  // Strip leading dashes/bullets
         text = text.replace(/^\s*#{1,3}\s+/gm, '');  // Strip heading markers
