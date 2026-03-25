@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FM Portal Test Suite — 20 Use Cases</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #1a1a2e; padding: 20px; }
+h1 { font-size: 22px; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: #666; margin-bottom: 16px; }
+.controls { margin-bottom: 16px; display: flex; gap: 10px; align-items: center; }
+.controls button { padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-run { background: #003366; color: white; }
+.btn-run:hover { background: #004488; }
+.btn-run:disabled { background: #999; cursor: not-allowed; }
+.btn-stop { background: #dc3545; color: white; }
+.progress { flex: 1; }
+.progress-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; background: #003366; transition: width 0.3s; width: 0%; }
+.stats { font-size: 13px; color: #666; margin-top: 4px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+.card { background: white; border-radius: 10px; border: 1px solid #e0e0e0; overflow: hidden; }
+.card-header { padding: 10px 14px; font-size: 13px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+.card-header .num { color: #003366; }
+.card-body { padding: 10px 14px; font-size: 12px; }
+.card-body .label { font-weight: 600; color: #666; font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
+.card-body .input-text { background: #f0f4f8; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; font-family: monospace; font-size: 12px; word-break: break-all; }
+.card-body .checks { margin-top: 6px; }
+.card-body .check-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 12px; }
+.card-body .check-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.card-body .response-preview { background: #f9f9f9; border: 1px solid #eee; border-radius: 6px; padding: 8px; margin-top: 6px; font-size: 11px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.status-pending .card-header { background: #f0f4f8; color: #666; }
+.status-running .card-header { background: #fff3cd; color: #856404; }
+.status-pass .card-header { background: #d4edda; color: #155724; }
+.status-fail .card-header { background: #f8d7da; color: #721c24; }
+.status-error .card-header { background: #f8d7da; color: #721c24; }
+.pass { background: #28a745; color: white; }
+.fail { background: #dc3545; color: white; }
+.pending { background: #e0e0e0; color: #999; }
+.running { background: #ffc107; color: #333; }
+</style>
+</head>
+<body>
+
+<h1>Filtration Mastermind — Test Suite</h1>
+<div class="subtitle">20 use cases across all features. Auto-runs against live portal API.</div>
+
+<div class="controls">
+    <button class="btn-run" id="btnRun" onclick="runAll()">Run All Tests</button>
+    <button class="btn-stop" id="btnStop" onclick="stopTests()" style="display:none;">Stop</button>
+    <div class="progress">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="stats" id="stats">Ready</div>
+    </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+var API = window.location.origin;
+var running = false;
+var stopped = false;
+
+var TESTS = [
+    // LOOKUP
+    { id: 1, category: 'Lookup', name: 'Exact part lookup', endpoint: '/api/lookup', method: 'POST', body: { part_number: 'CLR130' },
+      checks: [{ name: 'found=true', fn: d => d.found === true }, { name: 'Has Part_Number', fn: d => d.product && d.product.Part_Number }, { name: 'Has Price', fn: d => d.product && d.product.Price }] },
+
+    { id: 2, category: 'Lookup', name: 'Part not found', endpoint: '/api/lookup', method: 'POST', body: { part_number: 'DOESNOTEXIST999' },
+      checks: [{ name: 'found=false', fn: d => d.found === false }, { name: 'Has message', fn: d => !!d.message }] },
+
+    // SUGGEST
+    { id: 3, category: 'Suggest', name: 'Typeahead exact', endpoint: '/api/suggest?q=CLR1&mode=exact', method: 'GET',
+      checks: [{ name: 'Has suggestions', fn: d => d.suggestions && d.suggestions.length > 0 }, { name: 'First has Part_Number', fn: d => d.suggestions[0] && d.suggestions[0].Part_Number }] },
+
+    { id: 4, category: 'Suggest', name: 'Typeahead contains', endpoint: '/api/suggest?q=pall&mode=contains', method: 'GET',
+      checks: [{ name: 'Has suggestions', fn: d => d.suggestions && d.suggestions.length > 0 }] },
+
+    // SEARCH
+    { id: 5, category: 'Search', name: 'Product search', endpoint: '/api/search', method: 'POST', body: { query: '10 micron filter' },
+      checks: [{ name: 'Has results', fn: d => d.results && d.results.length > 0 }, { name: 'Has total_found', fn: d => d.total_found > 0 }] },
+
+    // MANUFACTURERS
+    { id: 6, category: 'Dropdown', name: 'Manufacturer list curated', endpoint: '/api/manufacturers/list', method: 'GET',
+      checks: [{ name: 'Has manufacturers', fn: d => d.manufacturers && d.manufacturers.length > 0 }, { name: 'Under 60 entries', fn: d => d.manufacturers.length < 60 }, { name: 'No DO NOT USE', fn: d => !d.manufacturers.some(m => /DO NOT USE/i.test(m)) }, { name: 'Contains Pall', fn: d => d.manufacturers.some(m => m === 'Pall' || m === 'Pall Trincor') }] },
+
+    // PRODUCT TYPES
+    { id: 7, category: 'Dropdown', name: 'Product type list curated', endpoint: '/api/product-types/list', method: 'GET',
+      checks: [{ name: 'Has product_types', fn: d => d.product_types && d.product_types.length > 0 }, { name: 'Under 20 entries', fn: d => d.product_types.length < 20 }, { name: 'No Regulators', fn: d => !d.product_types.some(t => /regulator/i.test(t)) }, { name: 'No Hydraulic', fn: d => !d.product_types.some(t => t === 'Hydraulic') }] },
+
+    // CHEMICALS
+    { id: 8, category: 'Dropdown', name: 'Chemical list', endpoint: '/api/chemicals/list', method: 'GET',
+      checks: [{ name: 'Has chemicals', fn: d => d.chemicals && d.chemicals.length > 0 }, { name: '300+ chemicals', fn: d => d.chemicals.length >= 300 }] },
+
+    // CHAT — LOOKUP
+    { id: 9, category: 'Chat', name: 'Chat lookup intent', endpoint: '/api/chat', method: 'POST', body: { message: 'lookup CLR130', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=lookup', fn: d => d.intent === 'lookup' }, { name: 'Cost=$0', fn: d => d.cost === '$0' }, { name: 'Has products', fn: d => d.products && d.products.length > 0 }] },
+
+    // CHAT — MANUFACTURER
+    { id: 10, category: 'Chat', name: 'Chat manufacturer intent', endpoint: '/api/chat', method: 'POST', body: { message: 'manufacturer Pall', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=manufacturer', fn: d => d.intent === 'manufacturer' }, { name: 'Cost=$0', fn: d => d.cost === '$0' }] },
+
+    // CHAT — PRICE
+    { id: 11, category: 'Chat', name: 'Chat price intent', endpoint: '/api/chat', method: 'POST', body: { message: 'price 2004355', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=price', fn: d => d.intent === 'price' }] },
+
+    // CHAT — COMPARE
+    { id: 12, category: 'Chat', name: 'Chat compare intent', endpoint: '/api/chat', method: 'POST', body: { message: 'compare CLR130 vs CLR120H21', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=compare', fn: d => d.intent === 'compare' }] },
+
+    // CHAT — PREGAME
+    { id: 13, category: 'Chat', name: 'Chat pregame (brewery)', endpoint: '/api/chat', method: 'POST', body: { message: 'pregame brewery', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=pregame', fn: d => d.intent === 'pregame' }, { name: 'No KB reference', fn: d => !/KB \d+\.\d+/.test(d.response) }] },
+
+    // CHAT — CHEMICAL
+    { id: 14, category: 'Chat', name: 'Chat chemical (sulfuric acid)', endpoint: '/api/chat', method: 'POST', body: { message: 'chemical compatibility of sulfuric acid', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=chemical', fn: d => d.intent === 'chemical' }, { name: 'Mentions Viton or PTFE', fn: d => /viton|ptfe/i.test(d.response) }] },
+
+    // CHAT — APPLICATION
+    { id: 15, category: 'Chat', name: 'Chat application query', endpoint: '/api/chat', method: 'POST', body: { message: 'I need a filter for hydraulic oil at 150 PSI', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'No KB reference', fn: d => !/KB \d+\.\d+/.test(d.response) }] },
+
+    // CHAT — HELP
+    { id: 16, category: 'Chat', name: 'Chat help command', endpoint: '/api/chat', method: 'POST', body: { message: 'help', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=help', fn: d => d.intent === 'help' }, { name: 'Cost=$0', fn: d => d.cost === '$0' }] },
+
+    // CHAT — QUOTE READY
+    { id: 17, category: 'Chat', name: 'Chat quote ready', endpoint: '/api/chat', method: 'POST', body: { message: 'quote ready', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Intent=quote_ready', fn: d => d.intent === 'quote_ready' }, { name: 'Cost=$0', fn: d => d.cost === '$0' }] },
+
+    // CHAT — OUT OF SCOPE
+    { id: 18, category: 'Chat', name: 'Chat out of scope', endpoint: '/api/chat', method: 'POST', body: { message: 'what is the weather today', session_id: 'test' },
+      checks: [{ name: 'Has response', fn: d => !!d.response }, { name: 'Scope rejection', fn: d => /scope|filtration|can.t help/i.test(d.response) }] },
+
+    // COMPARE SUGGESTIONS
+    { id: 19, category: 'Compare', name: 'Compare suggestions API', endpoint: '/api/compare-suggestions', method: 'POST', body: { part_number: '2004355' },
+      checks: [{ name: 'Has source', fn: d => !!d.source }, { name: 'Has categories', fn: d => d.categories && d.categories.length > 0 }] },
+
+    // DATA HEALTH
+    { id: 20, category: 'Health', name: 'Data loaded check', endpoint: '/api/suggest?q=test&mode=contains', method: 'GET',
+      checks: [{ name: 'API responds', fn: d => d !== undefined }, { name: 'Suggestions array exists', fn: d => Array.isArray(d.suggestions) }] },
+];
+
+function renderCards() {
+    var grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    TESTS.forEach(function(t) {
+        var card = document.createElement('div');
+        card.className = 'card status-pending';
+        card.id = 'card-' + t.id;
+        card.innerHTML =
+            '<div class="card-header"><span class="num">#' + t.id + ' ' + t.category + '</span><span>' + t.name + '</span></div>' +
+            '<div class="card-body">' +
+                '<div class="label">Input</div>' +
+                '<div class="input-text">' + (t.method === 'GET' ? t.endpoint : JSON.stringify(t.body)) + '</div>' +
+                '<div class="checks" id="checks-' + t.id + '">' +
+                    t.checks.map(function(c) {
+                        return '<div class="check-item"><div class="check-icon pending">-</div><span>' + c.name + '</span></div>';
+                    }).join('') +
+                '</div>' +
+                '<div class="response-preview" id="resp-' + t.id + '" style="display:none;"></div>' +
+            '</div>';
+        grid.appendChild(card);
+    });
+}
+
+async function runTest(test) {
+    var card = document.getElementById('card-' + test.id);
+    card.className = 'card status-running';
+    try {
+        var opts = { method: test.method, headers: { 'Content-Type': 'application/json' } };
+        if (test.body) opts.body = JSON.stringify(test.body);
+        var url = test.endpoint.startsWith('http') ? test.endpoint : API + test.endpoint;
+        var res = await fetch(url, opts);
+        var data = await res.json();
+
+        var allPass = true;
+        var checksEl = document.getElementById('checks-' + test.id);
+        var icons = checksEl.querySelectorAll('.check-icon');
+        test.checks.forEach(function(c, i) {
+            var pass = false;
+            try { pass = c.fn(data); } catch(e) { pass = false; }
+            icons[i].className = 'check-icon ' + (pass ? 'pass' : 'fail');
+            icons[i].textContent = pass ? '\u2713' : '\u2717';
+            if (!pass) allPass = false;
+        });
+
+        var respEl = document.getElementById('resp-' + test.id);
+        var preview = data.response ? data.response.substring(0, 300) : JSON.stringify(data).substring(0, 300);
+        respEl.textContent = preview;
+        respEl.style.display = 'block';
+
+        card.className = 'card ' + (allPass ? 'status-pass' : 'status-fail');
+        return allPass;
+    } catch(e) {
+        card.className = 'card status-error';
+        var respEl = document.getElementById('resp-' + test.id);
+        respEl.textContent = 'ERROR: ' + e.message;
+        respEl.style.display = 'block';
+        return false;
+    }
+}
+
+async function runAll() {
+    stopped = false;
+    running = true;
+    document.getElementById('btnRun').disabled = true;
+    document.getElementById('btnStop').style.display = 'inline-block';
+    renderCards();
+    var passed = 0, failed = 0, total = TESTS.length;
+
+    for (var i = 0; i < total; i++) {
+        if (stopped) break;
+        document.getElementById('progressFill').style.width = ((i + 1) / total * 100) + '%';
+        document.getElementById('stats').textContent = 'Running ' + (i + 1) + '/' + total + '...';
+        var ok = await runTest(TESTS[i]);
+        if (ok) passed++; else failed++;
+        // Small delay between tests to avoid rate limiting
+        await new Promise(r => setTimeout(r, 300));
+    }
+
+    document.getElementById('stats').textContent = 'Done: ' + passed + ' passed, ' + failed + ' failed' + (stopped ? ' (stopped early)' : '');
+    document.getElementById('btnRun').disabled = false;
+    document.getElementById('btnStop').style.display = 'none';
+    running = false;
+}
+
+function stopTests() { stopped = true; }
+
+renderCards();
+</script>
+</body>
+</html>
