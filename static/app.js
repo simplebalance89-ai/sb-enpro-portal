@@ -574,9 +574,11 @@
         html += '<div class="product-card-header">Part Number: ' + esc(String(pn)) + '</div>';
         html += '<div class="product-card-body">';
 
+        // Extended Description is primary (John's preference from Feb 25 meeting)
+        // Regular Description is fallback
+        var primaryDesc = ext || desc;
         var fields = [
-            ['Description', desc],
-            ['Extended Desc', ext],
+            ['Description', primaryDesc],
             ['Product Type', ptype],
             ['Manufacturer', mfg]
         ];
@@ -660,31 +662,16 @@
 
         html += '</div>'; // body
 
-        // Card actions — print/copy
-        html += '<div class="card-actions">';
-        html += '<button class="card-action-btn" onclick="printCard(this)">&#128424; Print</button>';
-        html += '<button class="card-action-btn" onclick="copyCard(this)">&#128203; Copy</button>';
-        html += '<button class="card-action-btn" onclick="addToQuote(this)" style="color:var(--accent);">&#128221; Quote</button>';
-        html += '<button class="card-action-btn" onclick="reportCard(this)" style="color:var(--stock-red);">&#9873; Report</button>';
-        html += '<button class="card-action-btn" onclick="pinCardProduct(this)">&#128204; Pin</button>';
-        html += '</div>';
+        // Card actions removed — keeping it simple
 
-        // Follow-up options (V5 style)
+        // Follow-up options only — clean, conversational
         html += '<div class="card-followups">';
-        html += '<div class="followup-label">Next Steps</div>';
         html += '<button class="followup-btn" onclick="sendMessage(\'compare ' + esc(String(pn)) + '\')">Compare Alternatives</button>';
         if (mfg) {
-            html += '<button class="followup-btn" onclick="sendMessage(\'manufacturer ' + esc(String(mfg)).replace(/'/g, "\\'") + '\')">More ' + esc(String(mfg).split(' ')[0]) + ' Products</button>';
+            html += '<button class="followup-btn" onclick="sendMessage(\'manufacturer ' + esc(String(mfg)).replace(/'/g, "\\'") + '\')">More ' + esc(String(mfg).split(' ')[0]) + '</button>';
         }
         html += '<button class="followup-btn" onclick="sendMessage(\'chemical compatibility for ' + esc(String(pn)) + '\')">Chemical Check</button>';
-        html += '<button class="followup-btn" onclick="sendMessage(\'pregame ' + esc(String(ptype || 'filtration')) + '\')">Pregame Meeting</button>';
-        html += '</div>';
-
-        // Footer — click to copy, no email app
-        html += '<div class="product-footer">';
-        html += '<strong>EnPro Inc</strong> &mdash; ';
-        html += '<span class="copy-link" onclick="copyToClipboard(\'service@enproinc.com\', this)">service@enproinc.com</span>';
-        html += ' | <span class="copy-link" onclick="copyToClipboard(\'1 (800) 323-2416\', this)">1 (800) 323-2416</span>';
+        html += '<button class="followup-btn" onclick="sendMessage(\'pregame ' + esc(String(ptype || 'filtration')) + '\')">Meeting Prep</button>';
         html += '</div>';
 
         html += '</div>';
