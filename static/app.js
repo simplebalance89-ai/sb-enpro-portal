@@ -100,6 +100,141 @@
         return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
+    function normalizeVoiceQuery(text) {
+        if (!text) return '';
+
+        var normalized = String(text)
+            .replace(/\bpal\b/gi, 'Pall')
+            .replace(/\bpower\s+parts?\b/gi, 'PowerFlow')
+            .replace(/\bfiltrox\b/gi, 'Filtrox')
+            .replace(/\bgraver\b/gi, 'Graver')
+            .replace(/\bppc\b/gi, 'PPC')
+            .replace(/\bflow\s*serve\b/gi, 'Flowserve')
+            .replace(/[“”]/g, '"')
+            .replace(/[\u2018\u2019]/g, "'");
+
+        normalized = normalized
+            .replace(/\b(yeah|ok|okay|you know|like|um|uh|sort of|kind of|whatever)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        return normalized;
+    }
+
+    function detectManufacturerHint(text) {
+        if (!text) return '';
+        var haystack = String(text).toLowerCase();
+        var vendors = ['Pall', 'PowerFlow', 'Flowserve', 'Graver', 'Filtrox', 'PPC', 'Lechler'];
+        for (var i = 0; i < vendors.length; i += 1) {
+            if (haystack.indexOf(vendors[i].toLowerCase()) !== -1) {
+                return vendors[i];
+            }
+        }
+        return '';
+    }
+
+    function buildVoiceFallbackActions(transcript, data) {
+        var cleaned = normalizeVoiceQuery((data && (data.cleaned_transcript || data.transcript)) || transcript || '');
+        var actions = [];
+        var lower = cleaned.toLowerCase();
+        var manufacturer = detectManufacturerHint(cleaned);
+
+        if (cleaned) {
+            actions.push({
+                label: 'Search broader',
+                query: 'search ' + cleaned
+            });
+        }
+
+        if (manufacturer) {
+            actions.push({
+                label: 'Show ' + manufacturer,
+                query: 'manufacturer ' + manufacturer
+            });
+        }
+
+        if (/\b(chemical|compatibility|compatible)\b/i.test(lower)) {
+            actions.push({
+                label: 'Chemical compatibility',
+                query: 'check chemical compatibility for ' + cleaned
+            });
+        }
+
+        if (/\b(price|pricing|cost|quote)\b/i.test(lower)) {
+            actions.push({
+                label: 'Pricing',
+                query: 'what is the price of ' + cleaned
+            });
+        }
+
+        if (/\b(stock|inventory|available|availability|lead time|ship|shipping)\b/i.test(lower)) {
+            actions.push({
+                label: 'Availability',
+                query: 'is ' + cleaned + ' in stock'
+            });
+        }
+
+        if (/\b(compare|similar|alternate|alternates|alternatives|other manufacturers|other options)\b/i.test(lower)) {
+            actions.push({
+                label: 'Find alternates',
+                query: 'find alternates for ' + cleaned
+            });
+        }
+
+        if (!actions.length) {
+            actions.push({
+                label: 'What are you trying to look for?',
+                query: 'lookup'
+            });
+        }
+
+        // Keep the UI focused: only show the most useful next steps.
+        var deduped = [];
+        var seen = {};
+        actions.forEach(function (action) {
+            var key = (action.query || '').toLowerCase();
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            deduped.push(action);
+        });
+
+        return deduped.slice(0, 4);
+    }
+
+    function renderVoiceFallbackCard(transcript, data) {
+        var cleaned = normalizeVoiceQuery((data && data.cleaned_transcript) || transcript || '');
+        var actions = buildVoiceFallbackActions(transcript, data);
+        var html = '<div class="chemical-card">';
+        html += '<div class="chemical-card-header">I did not find an exact match</div>';
+        html += '<div class="chemical-card-body">';
+        html += '<div style="margin-bottom:10px; color:var(--text); font-size:14px; line-height:1.5;">';
+        html += 'Let us narrow it down from the last query.';
+        if (cleaned) {
+            html += '<div style="margin-top:6px; color:var(--text-light); font-size:13px;">Cleaned query: ' + esc(cleaned) + '</div>';
+        }
+        html += '</div>';
+
+        html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
+        actions.forEach(function (action) {
+            html += '<button class="followup-btn" onclick="sendMessage(\'' + esc(action.query).replace(/'/g, "\\'") + '\')">' + esc(action.label) + '</button>';
+        });
+        html += '</div>';
+
+        if (data && data.suggestions && data.suggestions.length > 0) {
+            html += '<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">';
+            html += '<div style="font-size:11px; text-transform:uppercase; color:var(--text-light); font-weight:700; letter-spacing:0.5px; margin-bottom:6px;">Normalization hints</div>';
+            data.suggestions.forEach(function (s) {
+                html += '<div style="font-size:13px; margin-bottom:4px; color:var(--text);">';
+                html += esc(String(s.field || 'field')) + ': "' + esc(String(s.original || '')) + '" → <strong>' + esc(String(s.resolved || '')) + '</strong>';
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
     // ── Auto-grow textarea ──
     window.autoGrow = function (el) {
         el.style.height = 'auto';
@@ -254,7 +389,7 @@
                 var data = await res.json();
                 var suggestions = data.suggestions || [];
                 if (suggestions.length === 0) {
-                    appendMessage('bot', 'No products found ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + esc(partNumber) + '".\nContact: service@enproinc.com | 1 (800) 323-2416');
+                    appendCard(renderVoiceFallbackCard(partNumber, { transcript: partNumber, query: partNumber }));
                 } else {
                     appendMessage('bot', formatMarkdown('Found **' + suggestions.length + '** matches ' + (mode === 'starts_with' ? 'starting with' : 'containing') + ' "' + partNumber + '" [V25 FILTERS]:'));
                     // Stagger card loading so results cascade in smoothly
@@ -434,7 +569,7 @@
             }
         } else if (data.total_found !== undefined && data.query !== undefined) {
             // Search results with 0 matches
-            appendMessage('bot', formatMarkdown('No products found matching "' + (data.query || '') + '".\nTry a different search term or contact EnPro.\nservice@enproinc.com | 1 (800) 323-2416'));
+            appendCard(renderVoiceFallbackCard(data.query || '', data));
         } else if (typeof data === 'string') {
             appendMessage('bot', formatMarkdown(data));
         } else {
@@ -2900,7 +3035,7 @@
                             appendCard(renderProductCard(product));
                         });
                     } else {
-                        appendMessage('bot', 'No products found for that voice query. Try being more specific — like "10 micron Pall cartridge in stock".');
+                        appendCard(renderVoiceFallbackCard(data.transcript || '', data));
                     }
 
                 } catch (err) {
