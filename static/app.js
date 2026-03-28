@@ -2069,6 +2069,14 @@
         }
     };
 
+    // ── Search Filter Toggles ──
+    var inStockFilter = document.getElementById('inStockFilter');
+    if (inStockFilter) {
+        inStockFilter.addEventListener('change', function() {
+            window.searchSettings.inStockOnly = this.checked;
+        });
+    }
+
     // ── Typeahead / Autocomplete ──
     var suggestDropdown = document.getElementById('suggestDropdown');
     var suggestTimer = null;
@@ -3248,7 +3256,22 @@
     var voiceMediaRecorder = null;
     var voiceAudioChunks = [];
 
-    // Check for voice commands (trigger modals, send, hang up)
+    // Global search settings
+    window.searchSettings = {
+        inStockOnly: false,
+        mode: 'exact' // 'exact' or 'contains'
+    };
+    
+    // Toggle search mode
+    window.setSearchMode = function(mode) {
+        window.searchSettings.mode = mode;
+        document.getElementById('searchModeExact').classList.toggle('active', mode === 'exact');
+        document.getElementById('searchModeExact').style.background = mode === 'exact' ? 'white' : 'var(--bg)';
+        document.getElementById('searchModeContains').classList.toggle('active', mode === 'contains');
+        document.getElementById('searchModeContains').style.background = mode === 'contains' ? 'white' : 'var(--bg)';
+    };
+    
+    // Check for voice commands (trigger modals, send, hang up, toggles)
     function checkVoiceCommands(transcript) {
         var lower = transcript.toLowerCase().trim();
         
@@ -3267,6 +3290,30 @@
         }
         if (/^chemical\s+(check|compatibility)/.test(lower)) {
             showModal('chemical');
+            return true;
+        }
+        
+        // Filter toggles
+        if (/^(in stock|only in stock|show in stock)$/.test(lower)) {
+            document.getElementById('inStockFilter').checked = true;
+            window.searchSettings.inStockOnly = true;
+            appendMessage('bot', '<em>Filter set: In Stock only</em>');
+            return true;
+        }
+        if (/^(all stock|show all|any stock)$/.test(lower)) {
+            document.getElementById('inStockFilter').checked = false;
+            window.searchSettings.inStockOnly = false;
+            appendMessage('bot', '<em>Filter set: All products</em>');
+            return true;
+        }
+        if (/^exact match$/.test(lower)) {
+            setSearchMode('exact');
+            appendMessage('bot', '<em>Search mode: Exact match</em>');
+            return true;
+        }
+        if (/^contains$|^partial$/.test(lower)) {
+            setSearchMode('contains');
+            appendMessage('bot', '<em>Search mode: Contains</em>');
             return true;
         }
         
