@@ -187,7 +187,7 @@ def _check_escalation_triggers(message: str, context: Optional[dict] = None) -> 
             }
 
     # Numeric triggers — temperature
-    temp_match = re.search(r"(\d{3,})\s*(?:degrees?\s*)?(?:f|fahrenheit)", msg_lower)
+    temp_match = re.search(r"(?<![a-z0-9])(\d{3,})\s*(?:degrees?\s*)?(?:f|fahrenheit)\b", msg_lower)
     if temp_match:
         temp = int(temp_match.group(1))
         if temp > ESCALATION_TRIGGERS["temperature"]:
@@ -200,7 +200,7 @@ def _check_escalation_triggers(message: str, context: Optional[dict] = None) -> 
             }
 
     # Numeric triggers — pressure
-    psi_match = re.search(r"(\d{2,})\s*(?:psi|pounds)", msg_lower)
+    psi_match = re.search(r"(?<![a-z0-9])(\d{2,})\s*(?:psi|pounds)\b", msg_lower)
     if psi_match:
         psi = int(psi_match.group(1))
         if psi > ESCALATION_TRIGGERS["pressure"]:
@@ -213,7 +213,7 @@ def _check_escalation_triggers(message: str, context: Optional[dict] = None) -> 
             }
 
     # Numeric triggers — micron (below threshold)
-    micron_match = re.search(r"(0\.\d+)\s*(?:micron|um|µm)", msg_lower)
+    micron_match = re.search(r"(?<![a-z0-9])(0\.\d+)\s*(?:micron|um)\b", msg_lower)
     if micron_match:
         micron = float(micron_match.group(1))
         if micron < ESCALATION_TRIGGERS["micron"]:
