@@ -221,16 +221,36 @@
         html += '</div>';
 
         if (data && data.suggestions && data.suggestions.length > 0) {
-            html += '<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">';
-            html += '<div style="font-size:11px; text-transform:uppercase; color:var(--text-light); font-weight:700; letter-spacing:0.5px; margin-bottom:6px;">Normalization hints</div>';
-            data.suggestions.forEach(function (s) {
-                html += '<div style="font-size:13px; margin-bottom:4px; color:var(--text);">';
-                html += esc(String(s.field || 'field')) + ': "' + esc(String(s.original || '')) + '" → <strong>' + esc(String(s.resolved || '')) + '</strong>';
+            var strongHints = data.suggestions.filter(function (s) { return (s.confidence || 0) >= 0.90; });
+            if (strongHints.length > 0) {
+                html += '<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">';
+                html += '<div style="font-size:11px; text-transform:uppercase; color:var(--text-light); font-weight:700; letter-spacing:0.5px; margin-bottom:6px;">Normalization hints</div>';
+                strongHints.forEach(function (s) {
+                    html += '<div style="font-size:13px; margin-bottom:4px; color:var(--text);">';
+                    html += esc(String(s.field || 'field')) + ': "' + esc(String(s.original || '')) + '" → <strong>' + esc(String(s.resolved || '')) + '</strong>';
+                    html += '</div>';
+                });
                 html += '</div>';
-            });
-            html += '</div>';
+            }
         }
 
+        html += '</div></div>';
+        return html;
+    }
+
+    function renderVoiceClarifyCard(question, detail) {
+        var html = '<div class="chemical-card">';
+        html += '<div class="chemical-card-header">Need one quick check</div>';
+        html += '<div class="chemical-card-body">';
+        html += '<div style="margin-bottom:10px; color:var(--text); font-size:14px; line-height:1.5;">' + esc(question || 'What are you trying to look for?') + '</div>';
+        if (detail) {
+            html += '<div style="margin-bottom:10px; color:var(--text-light); font-size:13px;">' + esc(detail) + '</div>';
+        }
+        html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
+        html += '<button class="followup-btn" onclick="focusChatInput()">Type it again</button>';
+        html += '<button class="followup-btn" onclick="showModal(\'lookup\')">Lookup</button>';
+        html += '<button class="followup-btn" onclick="showModal(\'compare\')">Compare</button>';
+        html += '</div>';
         html += '</div></div>';
         return html;
     }
@@ -239,6 +259,10 @@
     window.autoGrow = function (el) {
         el.style.height = 'auto';
         el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+    };
+
+    window.focusChatInput = function () {
+        if (userInput) userInput.focus();
     };
 
     // ── Keyboard handling ──
@@ -1223,9 +1247,10 @@
         html += '<div style="padding: 0 0 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;">';
         html += '<label style="font-size:13px; font-weight:600; margin-bottom:6px; display:block;">Compare with any part:</label>';
         html += '<div style="display:flex; gap:8px;">';
-        html += '<input type="text" id="compareManualInput" placeholder="Enter part number..." onkeydown="if(event.key===\'Enter\')runCompareManual(\'' + esc(sourcePartNumber) + '\')" style="flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px;">';
+        html += '<input type="text" id="compareManualInput" list="compareManualList" placeholder="Enter part number..." onkeydown="if(event.key===\'Enter\')runCompareManual(\'' + esc(sourcePartNumber) + '\')" style="flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px;">';
         html += '<button class="quote-btn-primary" style="flex:none; padding:10px 16px;" onclick="runCompareManual(\'' + esc(sourcePartNumber) + '\')">Compare</button>';
         html += '</div></div>';
+        html += '<datalist id="compareManualList"></datalist>';
 
         // Categories
         if (data.categories && data.categories.length > 0) {
@@ -1265,12 +1290,53 @@
         }
 
         body.innerHTML = html;
+
+        var compareManualInput = document.getElementById('compareManualInput');
+        if (compareManualInput) {
+            compareManualInput.oninput = function () {
+                populateCompareDatalist('compareManualInput', 'compareManualList');
+            };
+            populateCompareDatalist('compareManualInput', 'compareManualList');
+        }
     }
 
     window.runCompareFromPanel = function (sourcePn, targetPn) {
         closeComparePanel();
         sendMessage('compare ' + sourcePn + ' vs ' + targetPn);
     };
+
+    function populateCompareDatalist(inputId, listId, query) {
+        var input = document.getElementById(inputId);
+        var list = document.getElementById(listId);
+        if (!input || !list) return;
+
+        var q = (query || input.value || '').trim();
+        if (q.length < 2) {
+            list.innerHTML = '';
+            return;
+        }
+
+        fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(q) + '&mode=contains&in_stock=all')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var suggestions = (data && data.suggestions) ? data.suggestions.slice(0, 8) : [];
+                if (!suggestions.length) {
+                    list.innerHTML = '';
+                    return;
+                }
+
+                var html = '';
+                suggestions.forEach(function (item) {
+                    var pn = item.Part_Number || '';
+                    var desc = item.Description || '';
+                    html += '<option value="' + esc(pn).replace(/"/g, '&quot;') + '">' + esc(pn + (desc ? ' — ' + desc : '')) + '</option>';
+                });
+                list.innerHTML = html;
+            })
+            .catch(function () {
+                list.innerHTML = '';
+            });
+    }
 
     window.runCompareManual = function (sourcePn) {
         var input = document.getElementById('compareManualInput');
@@ -1297,12 +1363,14 @@
 
         html += '<div style="margin-bottom:16px;">';
         html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part A</label>';
-        html += '<input type="text" id="comparePartA" value="' + (partA ? partA : '') + '" placeholder="Search or type part number..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<input type="text" id="comparePartA" list="comparePartAList" value="' + (partA ? partA : '') + '" placeholder="Search or type part number..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<datalist id="comparePartAList"></datalist>';
         html += '</div>';
 
         html += '<div style="margin-bottom:16px;">';
         html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part B</label>';
-        html += '<input type="text" id="comparePartB" placeholder="Search or type part number..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<input type="text" id="comparePartB" list="comparePartBList" placeholder="Search or type part number..." style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<datalist id="comparePartBList"></datalist>';
         html += '</div>';
 
         html += '<button onclick="runCompareSelector()" style="width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">Compare Side-by-Side</button>';
@@ -1322,6 +1390,9 @@
         var partBInput = document.getElementById('comparePartB');
         partAInput.onkeydown = function(e) { if (e.key === 'Enter') partBInput.focus(); };
         partBInput.onkeydown = function(e) { if (e.key === 'Enter') runCompareSelector(); };
+        partAInput.oninput = function () { populateCompareDatalist('comparePartA', 'comparePartAList'); };
+        partBInput.oninput = function () { populateCompareDatalist('comparePartB', 'comparePartBList'); };
+        populateCompareDatalist('comparePartA', 'comparePartAList');
     };
 
     window.runCompareSelector = function() {
@@ -1641,7 +1712,7 @@
     // ── Loading state ──
     function setLoading(on) {
         isLoading = on;
-        sendBtn.disabled = on;
+        if (sendBtn) sendBtn.disabled = on;
         typingEl.classList.toggle('active', on);
         if (on) {
             chatArea.appendChild(typingEl);
@@ -3013,17 +3084,26 @@
                         appendMessage('bot', '<em>I heard: "' + esc(data.transcript) + '"</em>');
                     }
 
-                    // Show confidence suggestions ("Did you mean?")
+                    // Show confidence suggestions only when we are at/above the 90% gate.
                     if (data.suggestions && data.suggestions.length > 0) {
-                        var sugHtml = '<div class="voice-suggestions" style="background:#fff3cd;padding:8px 12px;border-radius:8px;margin:4px 0;font-size:13px;">';
-                        sugHtml += '<strong>Did you mean?</strong><br>';
-                        data.suggestions.forEach(function (s) {
-                            sugHtml += '<span style="color:#856404;">' + esc(s.field) + ': ';
-                            sugHtml += '"' + esc(String(s.original)) + '" → <strong>' + esc(String(s.resolved)) + '</strong>';
-                            sugHtml += ' (' + Math.round(s.confidence * 100) + '%)</span><br>';
+                        var strongSuggestions = data.suggestions.filter(function (s) {
+                            return (s.confidence || 0) >= 0.90;
                         });
-                        sugHtml += '</div>';
-                        appendMessage('bot', sugHtml);
+
+                        if (strongSuggestions.length > 0) {
+                            var sugHtml = '<div class="voice-suggestions" style="background:#fff3cd;padding:8px 12px;border-radius:8px;margin:4px 0;font-size:13px;">';
+                            sugHtml += '<strong>Did you mean?</strong><br>';
+                            strongSuggestions.forEach(function (s) {
+                                sugHtml += '<span style="color:#856404;">' + esc(s.field) + ': ';
+                                sugHtml += '"' + esc(String(s.original)) + '" → <strong>' + esc(String(s.resolved)) + '</strong>';
+                                sugHtml += ' (' + Math.round(s.confidence * 100) + '%)</span><br>';
+                            });
+                            sugHtml += '</div>';
+                            appendMessage('bot', sugHtml);
+                        } else {
+                            var question = 'What did you want in inventory? Please repeat it more clearly.';
+                            appendCard(renderVoiceClarifyCard(question, ''));
+                        }
                     }
 
                     // Render product results using existing card renderer
