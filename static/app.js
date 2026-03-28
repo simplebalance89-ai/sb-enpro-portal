@@ -138,6 +138,68 @@
         var actions = [];
         var lower = cleaned.toLowerCase();
         var manufacturer = detectManufacturerHint(cleaned);
+        var hasManufacturerIntent = /\b(manufacturer|brand)\b/i.test(lower);
+        var hasInventoryIntent = /\b(stock|inventory|available|availability|in stock|lead time|ship|shipping)\b/i.test(lower);
+        var hasTopSellingIntent = /\b(top selling|top-sell|best selling|most popular|top products)\b/i.test(lower);
+        var hasPartIntent = /\b(part number|part #|pn|part)\b/i.test(lower);
+
+        if (hasTopSellingIntent) {
+            actions.push({
+                label: 'Top selling filter elements',
+                query: 'search filter element'
+            });
+            actions.push({
+                label: 'Pick manufacturer',
+                modal: 'manufacturer'
+            });
+            actions.push({
+                label: 'Lookup part number',
+                modal: 'lookup'
+            });
+        } else if (hasManufacturerIntent || manufacturer) {
+            actions.push({
+                label: 'Pick manufacturer',
+                modal: 'manufacturer'
+            });
+            actions.push({
+                label: 'Lookup part number',
+                modal: 'lookup'
+            });
+            actions.push({
+                label: 'Compare parts',
+                modal: 'compare'
+            });
+        } else if (hasInventoryIntent) {
+            actions.push({
+                label: 'Lookup part number',
+                modal: 'lookup'
+            });
+            actions.push({
+                label: 'Supplier / Alt code',
+                modal: 'supplier'
+            });
+            actions.push({
+                label: 'Compare parts',
+                modal: 'compare'
+            });
+            actions.push({
+                label: 'Pick manufacturer',
+                modal: 'manufacturer'
+            });
+        } else if (hasPartIntent) {
+            actions.push({
+                label: 'Lookup part number',
+                modal: 'lookup'
+            });
+            actions.push({
+                label: 'Supplier / Alt code',
+                modal: 'supplier'
+            });
+            actions.push({
+                label: 'Compare parts',
+                modal: 'compare'
+            });
+        }
 
         if (cleaned) {
             actions.push({
@@ -186,6 +248,10 @@
                 label: 'What are you trying to look for?',
                 query: 'lookup'
             });
+            actions.push({
+                label: 'Supplier / Alt code',
+                modal: 'supplier'
+            });
         }
 
         // Keep the UI focused: only show the most useful next steps.
@@ -208,7 +274,15 @@
         html += '<div class="chemical-card-header">I did not find an exact match</div>';
         html += '<div class="chemical-card-body">';
         html += '<div style="margin-bottom:10px; color:var(--text); font-size:14px; line-height:1.5;">';
-        html += 'Let us narrow it down from the last query.';
+        if (/\b(manufacturer|brand)\b/i.test(cleaned)) {
+            html += 'Which manufacturer are you looking for?';
+        } else if (/\b(top selling|top-sell|best selling|most popular|top products)\b/i.test(cleaned)) {
+            html += 'Do you want top-selling filter elements by manufacturer, or a specific part number?';
+        } else if (/\b(stock|inventory|available|availability|in stock|lead time|ship|shipping)\b/i.test(cleaned)) {
+            html += 'What did you want in inventory? Please repeat it more clearly.';
+        } else {
+            html += 'Let us narrow it down from the last query.';
+        }
         if (cleaned) {
             html += '<div style="margin-top:6px; color:var(--text-light); font-size:13px;">Cleaned query: ' + esc(cleaned) + '</div>';
         }
@@ -216,7 +290,11 @@
 
         html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
         actions.forEach(function (action) {
-            html += '<button class="followup-btn" onclick="sendMessage(\'' + esc(action.query).replace(/'/g, "\\'") + '\')">' + esc(action.label) + '</button>';
+            if (action.modal) {
+                html += '<button class="followup-btn" onclick="showModal(\'' + esc(action.modal).replace(/'/g, "\\'") + '\')">' + esc(action.label) + '</button>';
+            } else {
+                html += '<button class="followup-btn" onclick="sendMessage(\'' + esc(action.query).replace(/'/g, "\\'") + '\')">' + esc(action.label) + '</button>';
+            }
         });
         html += '</div>';
 
