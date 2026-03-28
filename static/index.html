@@ -2033,7 +2033,8 @@
         </div>
         <div id="pinnedProduct" class="pinned-product"></div>
         <div class="ctx-actions">
-            <button class="ctx-action-btn" onclick="clearContext()">Clear Context</button>
+            <!-- Clear Context button hidden - internal use only -->
+            <button class="ctx-action-btn" onclick="clearContext()" style="display:none;">Clear Context</button>
         </div>
     </div>
     <!-- Lane 2 — Chat -->
@@ -2130,6 +2131,22 @@
             </select>
             <select id="manufacturerSelect" class="chemical-select" style="display:none; width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; margin-top:8px;">
                 <option value="">-- Pick a manufacturer --</option>
+            </select>
+            <select id="industrySelect" class="chemical-select" style="display:none; width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px; font-family:inherit; background:white; margin-top:8px;">
+                <option value="">-- Select Industry --</option>
+                <option value="Brewery">Brewery / Beverage</option>
+                <option value="Hydraulic">Hydraulic / Lube Oil</option>
+                <option value="Compressed Air">Compressed Air / Gas</option>
+                <option value="Wastewater">Wastewater / Water Treatment</option>
+                <option value="Chemical">Chemical Processing</option>
+                <option value="Food">Food & Beverage</option>
+                <option value="Pharmaceutical">Pharmaceutical / Biotech</option>
+                <option value="Oilfield">Oilfield / Energy</option>
+                <option value="Mining">Mining / Heavy Industry</option>
+                <option value="Automotive">Automotive / Manufacturing</option>
+                <option value="Aerospace">Aerospace / Defense</option>
+                <option value="Pulp">Pulp & Paper</option>
+                <option value="Other">Other / General Industrial</option>
             </select>
             <div class="search-tags" id="searchTags" style="display:none; margin-top:10px;">
                 <div style="font-size:11px; color:var(--text-light); margin-bottom:6px; font-weight:600;">Quick Search:</div>

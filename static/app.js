@@ -843,9 +843,9 @@
             html += '<div class="stock-title">Inventory by Location</div>';
             inventoryEntries.forEach(function (entry) {
                 var badge = entry.qty >= 10 ? 'green' : entry.qty >= 3 ? 'orange' : 'red';
-                html += '<div class="stock-row">';
-                html += '<span>' + esc(entry.location) + '</span>';
-                html += '<span class="stock-qty ' + badge + '">' + entry.qty + ' units</span>';
+                html += '<div class="stock-row" style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:6px 0;">';
+                html += '<span style="color:#374151;">' + esc(entry.location) + '</span>';
+                html += '<span class="stock-qty ' + badge + '" style="white-space:nowrap;">' + entry.qty + ' units</span>';
                 html += '</div>';
             });
             html += '</div>';
@@ -874,7 +874,7 @@
             html += '<div class="price-section">';
             html += '<div class="stock-title">Pricing</div>';
             priceEntries.forEach(function (entry) {
-                html += '<div class="price-row"><span>' + esc(entry.label) + '</span><span class="price-val">' + esc(entry.value) + '</span></div>';
+                html += '<div class="price-row" style="display:flex; justify-content:space-between; gap:12px;"><span style="color:#6b7280;">' + esc(entry.label) + '</span><span class="price-val" style="font-weight:600;">' + esc(entry.value) + '</span></div>';
             });
             html += '</div>';
         } else {
@@ -1194,32 +1194,22 @@
 
         if (!partNumber) return;
 
-        // Build contextual action panel
+        // Build contextual action panel - simplified to 2 actions
         var panelId = 'actionPanel_' + Date.now();
         var panel = document.createElement('div');
         panel.className = 'msg bot';
         panel.innerHTML = '<div class="action-panel" id="' + panelId + '">' +
             '<div class="action-panel-header">Next Steps for ' + esc(partNumber) + '</div>' +
-            '<div class="action-grid">' +
+            '<div class="action-grid" style="grid-template-columns: 1fr 1fr;">' +
                 '<div class="action-card" onclick="runAction(\'chemical\', \'' + esc(partNumber) + '\', this)" data-action-num="1">' +
                     '<div class="action-num">1</div>' +
                     '<div class="action-label">Chemical Compatibility</div>' +
-                    '<div class="action-desc">Material compatibility</div>' +
+                    '<div class="action-desc">Check material compatibility</div>' +
                 '</div>' +
-                '<div class="action-card" onclick="runAction(\'price\', \'' + esc(partNumber) + '\', this)" data-action-num="2">' +
+                '<div class="action-card" onclick="startCompareQuote(\'' + esc(partNumber) + '\', this)" data-action-num="2">' +
                     '<div class="action-num">2</div>' +
-                    '<div class="action-label">Price Check</div>' +
-                    '<div class="action-desc">Quick pricing lookup</div>' +
-                '</div>' +
-                '<div class="action-card" onclick="runAction(\'availability\', \'' + esc(partNumber) + '\', this)" data-action-num="3">' +
-                    '<div class="action-num">3</div>' +
-                    '<div class="action-label">Availability</div>' +
-                    '<div class="action-desc">Stock and inventory</div>' +
-                '</div>' +
-                '<div class="action-card" onclick="showCompareForm(\'' + esc(partNumber) + '\', \'' + panelId + '\')" data-action-num="4">' +
-                    '<div class="action-num">4</div>' +
                     '<div class="action-label">Compare</div>' +
-                    '<div class="action-desc">Side-by-side with another part</div>' +
+                    '<div class="action-desc">Add to quote & compare</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -1238,12 +1228,7 @@
             case 'chemical':
                 sendMessage('chemical compatibility check for part ' + partNumber);
                 break;
-            case 'price':
-                sendMessage('price ' + partNumber);
-                break;
-            case 'availability':
-                sendMessage('lookup ' + partNumber);
-                break;
+
         }
     };
 
@@ -1251,6 +1236,20 @@
     window.showCompareForm = function (partNumber, panelId) {
         // Instead of inline form, open compare side panel
         openComparePanel(partNumber);
+    };
+
+    // Start compare and add to quote state (auto-populate first box)
+    window.startCompareQuote = function (partNumber, el) {
+        if (el) {
+            el.classList.add('action-done');
+            el.style.pointerEvents = 'none';
+        }
+        // Add to quote state first
+        sendMessage('add ' + partNumber + ' to quote');
+        // Then open compare panel
+        setTimeout(function() {
+            openComparePanel(partNumber);
+        }, 500);
     };
 
     // ── Compare Side Panel ──
@@ -1808,17 +1807,20 @@
     function applyPregameWizardStep() {
         modalTitle.textContent = 'Customer Pre Game';
         if (pregameStep === 0) {
+            // Step 1: Customer Name (text input)
             modalLabel.textContent = 'Customer Name';
-            modalInput.placeholder = 'e.g., Acme Brewing';
-            modalHint.textContent = 'Start with the customer name.';
+            modalInput.placeholder = 'e.g., Acme Brewing Co.';
+            modalHint.innerHTML = '<strong>Step 1 of 2:</strong> Enter the customer company name';
+            modalInput.style.display = 'block';
+            document.getElementById('industrySelect').style.display = 'none';
+            setTimeout(function () { modalInput.focus(); }, 100);
         } else if (pregameStep === 1) {
+            // Step 2: Industry (dropdown)
             modalLabel.textContent = 'Industry / Application';
-            modalInput.placeholder = 'e.g., brewery, hydraulic oil, wastewater';
-            modalHint.textContent = 'Tell me the industry or application.';
-        } else {
-            modalLabel.textContent = 'Product Type / Part Family';
-            modalInput.placeholder = 'e.g., filter element, cartridge, housing';
-            modalHint.textContent = 'Finish with the product type or part family.';
+            modalHint.innerHTML = '<strong>Step 2 of 2:</strong> Select the industry from the dropdown';
+            modalInput.style.display = 'none';
+            document.getElementById('industrySelect').style.display = 'block';
+            document.getElementById('industrySelect').value = '';
         }
         lookupModeRow.style.display = 'none';
         document.getElementById('chemicalSelect').style.display = 'none';
@@ -1826,7 +1828,6 @@
         document.getElementById('productTypeSelect').style.display = 'none';
         document.getElementById('searchTags').style.display = 'none';
         modalInput.value = '';
-        setTimeout(function () { modalInput.focus(); }, 100);
     }
 
     window.showModal = function (type) {
@@ -1948,24 +1949,30 @@
         var mode = lookupMode.value;
 
         if (type === 'pregame') {
-            if (pregameStep === 0) pregameData.customer = val;
-            else if (pregameStep === 1) pregameData.industry = val;
-            else pregameData.product_type = val;
-
-            if (pregameStep < 2) {
-                pregameStep += 1;
+            if (pregameStep === 0) {
+                // Step 1: Customer name
+                if (!val) return;
+                pregameData.customer = val;
+                pregameStep = 1;
                 applyPregameWizardStep();
                 return;
+            } else if (pregameStep === 1) {
+                // Step 2: Industry from dropdown
+                var industryVal = document.getElementById('industrySelect').value;
+                if (!industryVal) {
+                    alert('Please select an industry');
+                    return;
+                }
+                pregameData.industry = industryVal;
+                
+                hideModal();
+                var pregameParts = [];
+                if (pregameData.customer) pregameParts.push('customer ' + pregameData.customer);
+                if (pregameData.industry) pregameParts.push('industry ' + pregameData.industry);
+                sendMessage('pregame ' + pregameParts.join(' | '));
+                resetPregameWizard();
+                return;
             }
-
-            hideModal();
-            var pregameParts = [];
-            if (pregameData.customer) pregameParts.push('customer ' + pregameData.customer);
-            if (pregameData.industry) pregameParts.push('industry ' + pregameData.industry);
-            if (pregameData.product_type) pregameParts.push('product type ' + pregameData.product_type);
-            sendMessage('pregame ' + pregameParts.join(' | '));
-            resetPregameWizard();
-            return;
         }
 
         hideModal();
@@ -2008,6 +2015,13 @@
     });
 
     // Arrow keys + Enter in the suggest dropdown
+    // Industry dropdown auto-submit
+    document.getElementById('industrySelect').addEventListener('change', function() {
+        if (currentModalType === 'pregame' && pregameStep === 1) {
+            modalSubmit();
+        }
+    });
+
     modalInput.addEventListener('keydown', function (e) {
         if (currentModalType !== 'lookup') return;
         if (!suggestDropdown.classList.contains('active')) return;
