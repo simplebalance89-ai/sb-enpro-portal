@@ -82,13 +82,16 @@ async def lifespan(app: FastAPI):
         state.chemicals_df = load_chemicals()
         state.df = merge_data(state.static_df, state.inventory_df)
         state.last_inventory_load = datetime.utcnow()
-        state.data_loaded = True
-        logger.info(
-            f"Data loaded: {len(state.df)} products, "
-            f"{len(state.chemicals_df)} chemical entries"
-        )
-        # Initialize voice search vocabulary from product data
-        init_voice_search(state.df)
+        state.data_loaded = not state.df.empty
+        if state.data_loaded:
+            logger.info(
+                f"Data loaded: {len(state.df)} products, "
+                f"{len(state.chemicals_df)} chemical entries"
+            )
+            # Initialize voice search vocabulary from product data
+            init_voice_search(state.df)
+        else:
+            logger.error("Startup data load completed with zero products; portal will stay degraded")
     except Exception as e:
         logger.error(f"Data loading failed: {e}")
         state.data_loaded = False

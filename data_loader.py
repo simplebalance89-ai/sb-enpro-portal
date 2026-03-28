@@ -4,15 +4,18 @@ Loads static crosswalk, live inventory, and chemical crosswalk from Azure Blob S
 Merges static specs with live inventory on Part_Number.
 """
 
-import pandas as pd
-import os
 import logging
-from typing import Optional
+import os
+
+import pandas as pd
 
 logger = logging.getLogger("enpro.data_loader")
 
 SAS = os.environ.get("AZURE_BLOB_SAS", "")
-BASE = "https://enproaidata.blob.core.windows.net/fm-data"
+BASE = os.environ.get(
+    "AZURE_BLOB_BASE",
+    "https://enproaidatav1.blob.core.windows.net/fm-data",
+)
 
 
 def _blob_url(filename: str) -> str:
@@ -31,8 +34,16 @@ def load_static() -> pd.DataFrame:
         logger.info(f"Static crosswalk loaded: {len(df)} rows, {len(df.columns)} columns")
         return df
     except Exception as e:
-        logger.error(f"Failed to load static crosswalk: {e}")
-        return pd.DataFrame()
+        logger.warning(f"Failed to load static crosswalk: {e}")
+        fallback_url = _blob_url("inventory_live.csv")
+        logger.info("Falling back to inventory_live.csv for static product data...")
+        try:
+            df = pd.read_csv(fallback_url, dtype=str).fillna("")
+            logger.info(f"Static fallback loaded: {len(df)} rows, {len(df.columns)} columns")
+            return df
+        except Exception as fallback_error:
+            logger.error(f"Static fallback also failed: {fallback_error}")
+            return pd.DataFrame()
 
 
 def load_inventory() -> pd.DataFrame:
