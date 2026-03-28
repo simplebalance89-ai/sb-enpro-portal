@@ -800,19 +800,14 @@
             ['Manufacturer', mfg]
         ];
 
-        // Specs line (micron is clickable)
-        var specs = [];
-        if (micron && micron !== '0' && micron !== '0.0') specs.push('<a class="card-link" onclick="sendMessage(\'search ' + esc(String(micron)) + ' micron filters\')">' + esc(String(micron)) + ' Micron</a>');
-        if (media) specs.push(esc(String(media)));
-        if (tempF && tempF !== '0' && tempF !== '0.0') specs.push(esc(String(tempF)) + '°F');
-        if (psi && psi !== '0' && psi !== '0.0') specs.push(esc(String(psi)) + ' PSI');
-        if (flow) specs.push(esc(String(flow)));
-        if (specs.length) {
-            fields.push(['Specs', specs.map(function (spec) {
-                return '<div class="spec-line">' + spec + '</div>';
-            }).join('')]);
+        // Specs with explicit labels (no more mystery values)
+        if (micron && micron !== '0' && micron !== '0.0') {
+            fields.push(['Micron', '<a class="card-link" onclick="sendMessage(\'search ' + esc(String(micron)) + ' micron filters\')">' + esc(String(micron)) + '</a>']);
         }
-
+        if (media) fields.push(['Media', esc(String(media))]);
+        if (tempF && tempF !== '0' && tempF !== '0.0') fields.push(['Max Temp', esc(String(tempF)) + '°F']);
+        if (psi && psi !== '0' && psi !== '0.0') fields.push(['Max PSI', esc(String(psi)) + ' PSI']);
+        if (flow) fields.push(['Flow Rate', esc(String(flow))]);
         if (eff) fields.push(['Efficiency', eff]);
 
         fields.forEach(function (f) {
@@ -824,8 +819,8 @@
                     html += '<div class="product-field-value"><a class="card-link" onclick="sendMessage(\'manufacturer ' + esc(val).replace(/'/g, "\\'") + '\')">' + esc(val) + '</a></div>';
                 } else if (f[0] === 'Product Type') {
                     html += '<div class="product-field-value"><a class="card-link" onclick="sendMessage(\'search ' + esc(val).replace(/'/g, "\\'") + '\')">' + esc(val) + '</a></div>';
-                } else if (f[0] === 'Specs') {
-                    // Specs already contain HTML links for micron
+                } else if (['Micron', 'Media', 'Max Temp', 'Max PSI', 'Flow Rate', 'Efficiency'].includes(f[0])) {
+                    // Spec fields already have formatting
                     html += '<div class="product-field-value">' + val + '</div>';
                 } else {
                     html += '<div class="product-field-value">' + esc(val) + '</div>';
