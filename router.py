@@ -718,9 +718,10 @@ def _try_chemical_fast_path(
             candidate = message[len(prefix):].strip()
             if candidate:
                 # Try to look up as a part number
-                product = lookup_part(df, candidate)
+                lookup_candidate = candidate.lstrip('/\\').strip()
+                product = lookup_part(df, lookup_candidate)
                 if product:
-                    part_number = candidate
+                    part_number = lookup_candidate
                     break
 
     if not part_number or not product:

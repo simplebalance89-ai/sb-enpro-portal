@@ -618,65 +618,65 @@
         });
 
         // Stock
+        var inventoryEntries = [];
         if (stock && typeof stock === 'object' && Object.keys(stock).length > 0) {
-            html += '<div class="stock-section">';
-            html += '<div class="stock-title">Inventory</div>';
-            var locations = Object.keys(stock);
-            var hasStock = false;
-            locations.forEach(function (loc) {
-                if (loc === 'status') {
-                    html += '<div class="stock-row"><span style="color: var(--stock-red); font-weight: 600;">' + esc(String(stock[loc])) + '</span></div>';
-                    return;
-                }
+            Object.keys(stock).forEach(function (loc) {
+                if (loc === 'status') return;
                 var qty = parseInt(stock[loc]) || 0;
-                if (qty > 0) {
-                    hasStock = true;
-                    var badge = qty >= 10 ? 'green' : qty >= 3 ? 'orange' : 'red';
-                    html += '<div class="stock-row">';
-                    html += '<span>' + esc(loc) + '</span>';
-                    html += '<span class="stock-qty ' + badge + '">' + qty + ' in stock</span>';
-                    html += '</div>';
-                }
+                inventoryEntries.push({ location: loc, qty: qty });
             });
-            if (!hasStock && !stock.status) {
-                html += '<div class="stock-row"><span style="color: var(--stock-red); font-weight: 600;">Out of stock at all locations</span></div>';
-            }
+        }
+        if (inventoryEntries.length > 0) {
+            html += '<div class="stock-section">';
+            html += '<div class="stock-title">Inventory by Location</div>';
+            inventoryEntries.forEach(function (entry) {
+                var badge = entry.qty >= 10 ? 'green' : entry.qty >= 3 ? 'orange' : 'red';
+                html += '<div class="stock-row">';
+                html += '<span>' + esc(entry.location) + '</span>';
+                html += '<span class="stock-qty ' + badge + '">' + entry.qty + ' units</span>';
+                html += '</div>';
+            });
             html += '</div>';
         } else if (totalStock > 0) {
-            html += '<div class="stock-section"><div class="stock-title">Inventory</div>';
-            html += '<div class="stock-row"><span class="stock-qty green">' + totalStock + ' total in stock</span></div></div>';
+            html += '<div class="stock-section">';
+            html += '<div class="stock-title">Inventory</div>';
+            html += '<div class="stock-row"><span class="stock-qty green">' + totalStock + ' total units</span></div>';
+            html += '</div>';
+        } else {
+            html += '<div class="stock-section">';
+            html += '<div class="stock-title">Inventory</div>';
+            html += '<div class="stock-row"><span class="stock-qty red">Out of stock</span></div>';
+            html += '</div>';
         }
 
-        // Price
-        var priceStr = String(price);
-        if (priceStr && priceStr !== '' && priceStr !== '0' && priceStr !== '0.0' && priceStr !== '$0.00') {
-            if (priceStr.startsWith('$') || priceStr.startsWith('Contact')) {
-                html += '<div class="product-price ' + (priceStr.startsWith('$') ? 'has-price' : 'no-price') + '">' + esc(priceStr) + '</div>';
-            } else {
-                var priceVal = parseFloat(priceStr);
-                if (priceVal > 0) {
-                    html += '<div class="product-price has-price">$' + priceVal.toFixed(2) + '</div>';
-                } else {
-                    html += '<div class="product-price no-price">Contact EnPro for pricing</div>';
-                }
-            }
+        // Price rows (primary + fallbacks)
+        var priceEntries = [];
+        if (price) priceEntries.push({ label: 'Displayed Price', value: price });
+        if (p.Last_Sell_Price && p.Last_Sell_Price > 0) {
+            priceEntries.push({ label: 'Last Sell Price', value: '$' + Number(p.Last_Sell_Price).toFixed(2) });
+        }
+        if (p.Price_1 && p.Price_1 > 0) {
+            priceEntries.push({ label: 'Price 1', value: '$' + Number(p.Price_1).toFixed(2) });
+        }
+        if (priceEntries.length) {
+            html += '<div class="price-section">';
+            html += '<div class="stock-title">Pricing</div>';
+            priceEntries.forEach(function (entry) {
+                html += '<div class="price-row"><span>' + esc(entry.label) + '</span><span class="price-val">' + esc(entry.value) + '</span></div>';
+            });
+            html += '</div>';
         } else {
-            html += '<div class="product-price no-price">Contact EnPro for pricing</div>';
+            html += '<div class="price-section">';
+            html += '<div class="stock-title">Pricing</div>';
+            html += '<div class="price-row"><span>Base</span><span class="price-val">Contact EnPro for pricing</span></div>';
+            html += '</div>';
         }
 
         html += '</div>'; // body
 
-        // Card actions removed — keeping it simple
-
-        // Follow-up options only — clean, conversational
-        html += '<div class="card-followups">';
-        html += '<button class="followup-btn" onclick="sendMessage(\'compare ' + esc(String(pn)) + '\')">Compare Alternatives</button>';
-        if (mfg) {
-            html += '<button class="followup-btn" onclick="sendMessage(\'manufacturer ' + esc(String(mfg)).replace(/'/g, "\\'") + '\')">More ' + esc(String(mfg).split(' ')[0]) + '</button>';
-        }
-        html += '<button class="followup-btn" onclick="sendMessage(\'chemical compatibility for ' + esc(String(pn)) + '\')">Chemical Check</button>';
-        html += '<button class="followup-btn" onclick="sendMessage(\'pregame ' + esc(String(ptype || 'filtration')) + '\')">Meeting Prep</button>';
+        // Card actions removed � keeping it simple
         html += '</div>';
+
 
         html += '</div>';
         return html;
@@ -3341,3 +3341,4 @@
     }
 
 })();
+
