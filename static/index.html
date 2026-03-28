@@ -1987,8 +1987,8 @@
         <button class="qa-btn" onclick="showModal('lookup')">
             <span class="qa-icon">&#128269;</span> Lookup Part Number
         </button>
-        <button class="qa-btn" onclick="showModal('product_type')">
-            <span class="qa-icon">&#128230;</span> Product Type
+        <button class="qa-btn" onclick="showModal('industry')">
+            <span class="qa-icon">&#127981;</span> Industry
         </button>
         <button class="qa-btn" onclick="showModal('manufacturer')">
             <span class="qa-icon">&#127981;</span> Manufacturer
@@ -2148,6 +2148,73 @@
                 <option value="Pulp">Pulp & Paper</option>
                 <option value="Other">Other / General Industrial</option>
             </select>
+            <div id="specSelects" style="display:none; margin-top:8px;">
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:13px; color:#6b7280; margin-bottom:6px; font-weight:500;">Micron Rating</label>
+                    <select id="specMicron" class="chemical-select" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+                        <option value="">Any Micron</option>
+                        <option value="0.1">0.1 Micron (Ultra-fine)</option>
+                        <option value="0.2">0.2 Micron</option>
+                        <option value="0.45">0.45 Micron</option>
+                        <option value="1">1 Micron</option>
+                        <option value="3">3 Micron</option>
+                        <option value="5">5 Micron</option>
+                        <option value="10">10 Micron</option>
+                        <option value="25">25 Micron</option>
+                        <option value="50">50 Micron</option>
+                        <option value="100">100 Micron</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:13px; color:#6b7280; margin-bottom:6px; font-weight:500;">Media Type</label>
+                    <select id="specMedia" class="chemical-select" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+                        <option value="">Any Media</option>
+                        <option value="Polypropylene">Polypropylene</option>
+                        <option value="PTFE">PTFE</option>
+                        <option value="Nylon">Nylon</option>
+                        <option value="Cellulose">Cellulose</option>
+                        <option value="Glass Fiber">Glass Fiber</option>
+                        <option value="Stainless Steel">Stainless Steel</option>
+                        <option value="PES">PES (Polyethersulfone)</option>
+                        <option value="PVDF">PVDF</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:13px; color:#6b7280; margin-bottom:6px; font-weight:500;">Max Temperature</label>
+                    <select id="specTemp" class="chemical-select" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+                        <option value="">Any Temperature</option>
+                        <option value="140">140°F (Standard)</option>
+                        <option value="180">180°F</option>
+                        <option value="200">200°F</option>
+                        <option value="250">250°F</option>
+                        <option value="300">300°F (High Temp)</option>
+                        <option value="400">400°F (Extreme)</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:13px; color:#6b7280; margin-bottom:6px; font-weight:500;">Max PSI</label>
+                    <select id="specPSI" class="chemical-select" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+                        <option value="">Any Pressure</option>
+                        <option value="50">50 PSI (Low)</option>
+                        <option value="75">75 PSI</option>
+                        <option value="100">100 PSI (Medium)</option>
+                        <option value="150">150 PSI</option>
+                        <option value="200">200 PSI (High)</option>
+                        <option value="300">300 PSI+ (Ultra)</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:13px; color:#6b7280; margin-bottom:6px; font-weight:500;">Flow Rate</label>
+                    <select id="specFlow" class="chemical-select" style="width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+                        <option value="">Any Flow Rate</option>
+                        <option value="10">10 GPM (Low)</option>
+                        <option value="25">25 GPM</option>
+                        <option value="50">50 GPM (Medium)</option>
+                        <option value="100">100 GPM</option>
+                        <option value="200">200 GPM+ (High)</option>
+                    </select>
+                </div>
+            </div>
             <div class="search-tags" id="searchTags" style="display:none; margin-top:10px;">
                 <div style="font-size:11px; color:var(--text-light); margin-bottom:6px; font-weight:600;">Quick Search:</div>
                 <div class="search-tag-grid">

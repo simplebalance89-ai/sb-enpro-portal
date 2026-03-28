@@ -1797,37 +1797,66 @@
     var lookupModeRow = document.getElementById('lookupModeRow');
     var lookupMode = document.getElementById('lookupMode');
     var pregameStep = 0;
-    var pregameData = { customer: '', industry: '', product_type: '' };
+    var pregameData = { customer: '', industry: '', application: '', knownInfo: '', specs: {} };
 
     function resetPregameWizard() {
         pregameStep = 0;
-        pregameData = { customer: '', industry: '', product_type: '' };
+        pregameData = { customer: '', industry: '', application: '', knownInfo: '', specs: {} };
+        // Clear spec dropdowns
+        document.getElementById('specMicron').value = '';
+        document.getElementById('specMedia').value = '';
+        document.getElementById('specTemp').value = '';
+        document.getElementById('specPSI').value = '';
+        document.getElementById('specFlow').value = '';
     }
 
     function applyPregameWizardStep() {
-        modalTitle.textContent = 'Customer Pre Game';
-        if (pregameStep === 0) {
-            // Step 1: Customer Name (text input)
-            modalLabel.textContent = 'Customer Name';
-            modalInput.placeholder = 'e.g., Acme Brewing Co.';
-            modalHint.innerHTML = '<strong>Step 1 of 2:</strong> Enter the customer company name';
-            modalInput.style.display = 'block';
-            document.getElementById('industrySelect').style.display = 'none';
-            setTimeout(function () { modalInput.focus(); }, 100);
-        } else if (pregameStep === 1) {
-            // Step 2: Industry (dropdown)
-            modalLabel.textContent = 'Industry / Application';
-            modalHint.innerHTML = '<strong>Step 2 of 2:</strong> Select the industry from the dropdown';
-            modalInput.style.display = 'none';
-            document.getElementById('industrySelect').style.display = 'block';
-            document.getElementById('industrySelect').value = '';
-        }
-        lookupModeRow.style.display = 'none';
+        modalTitle.textContent = 'Customer Pre Game — Meeting Prep';
+        
+        // Hide all special inputs first
+        modalInput.style.display = 'none';
+        document.getElementById('industrySelect').style.display = 'none';
+        document.getElementById('specSelects').style.display = 'none';
         document.getElementById('chemicalSelect').style.display = 'none';
         document.getElementById('manufacturerSelect').style.display = 'none';
         document.getElementById('productTypeSelect').style.display = 'none';
         document.getElementById('searchTags').style.display = 'none';
-        modalInput.value = '';
+        lookupModeRow.style.display = 'none';
+        
+        if (pregameStep === 0) {
+            // Step 1: Customer Name
+            modalLabel.textContent = 'Who is the customer?';
+            modalInput.placeholder = 'Company name (e.g., Acme Brewing Co.)';
+            modalHint.innerHTML = '<strong>Step 1 of 4:</strong> Enter the customer company name';
+            modalInput.style.display = 'block';
+            modalInput.value = pregameData.customer || '';
+            setTimeout(function () { modalInput.focus(); }, 100);
+            
+        } else if (pregameStep === 1) {
+            // Step 2: Industry dropdown
+            modalLabel.textContent = 'What industry?';
+            modalHint.innerHTML = '<strong>Step 2 of 4:</strong> Select their industry';
+            document.getElementById('industrySelect').style.display = 'block';
+            document.getElementById('industrySelect').value = pregameData.industry || '';
+            
+        } else if (pregameStep === 2) {
+            // Step 3: Application type
+            modalLabel.textContent = 'What is the application?';
+            modalHint.innerHTML = '<strong>Step 3 of 4:</strong> Select the application type';
+            // Show application dropdown (we'll create this dynamically or use a select)
+            modalInput.style.display = 'block';
+            modalInput.placeholder = 'e.g., Liquid process, Gas, Hydraulic';
+            modalInput.value = pregameData.application || '';
+            
+        } else if (pregameStep === 3) {
+            // Step 4: What do they already know?
+            modalLabel.textContent = 'What do you already know?';
+            modalHint.innerHTML = '<strong>Step 4 of 4:</strong> Enter any specs or part numbers (optional)';
+            document.getElementById('specSelects').style.display = 'block';
+            modalInput.style.display = 'block';
+            modalInput.placeholder = 'Current part number or manufacturer (optional)';
+            modalInput.value = pregameData.knownInfo || '';
+        }
     }
 
     window.showModal = function (type) {
@@ -1880,11 +1909,13 @@
                 modalInput.placeholder = 'e.g., T1030000000';
                 modalHint.textContent = 'Enter the supplier/OEM part number.';
                 break;
-            case 'product_type':
-                modalTitle.textContent = 'Filter by Product Type';
-                modalLabel.textContent = 'Product Type';
-                modalInput.placeholder = 'e.g., Bag Filter, Cartridge, Housing';
-                modalHint.innerHTML = '<strong>Narrow down:</strong> Select product type to filter the catalog<br><small>Crosswalk will show compatible alternatives by type</small>';
+            case 'industry':
+                modalTitle.textContent = 'Filter by Industry';
+                modalLabel.textContent = 'Industry / Application';
+                modalInput.style.display = 'none';
+                document.getElementById('industrySelect').style.display = 'block';
+                document.getElementById('industrySelect').value = '';
+                modalHint.innerHTML = '<strong>Narrow down:</strong> Select industry to filter products by application<br><small>Crosswalk will show industry-specific alternatives</small>';
                 break;
             case 'manufacturer':
                 modalTitle.textContent = 'Filter by Manufacturer';
@@ -1957,18 +1988,51 @@
                 applyPregameWizardStep();
                 return;
             } else if (pregameStep === 1) {
-                // Step 2: Industry from dropdown
+                // Step 2: Industry
                 var industryVal = document.getElementById('industrySelect').value;
                 if (!industryVal) {
                     alert('Please select an industry');
                     return;
                 }
                 pregameData.industry = industryVal;
+                pregameStep = 2;
+                applyPregameWizardStep();
+                return;
+            } else if (pregameStep === 2) {
+                // Step 3: Application
+                pregameData.application = val || 'General';
+                pregameStep = 3;
+                applyPregameWizardStep();
+                return;
+            } else if (pregameStep === 3) {
+                // Step 4: Known info + specs
+                pregameData.knownInfo = val || '';
+                pregameData.specs = {
+                    micron: document.getElementById('specMicron').value,
+                    media: document.getElementById('specMedia').value,
+                    temp: document.getElementById('specTemp').value,
+                    psi: document.getElementById('specPSI').value,
+                    flow: document.getElementById('specFlow').value
+                };
                 
                 hideModal();
+                
+                // Build comprehensive pregame message
                 var pregameParts = [];
-                if (pregameData.customer) pregameParts.push('customer ' + pregameData.customer);
-                if (pregameData.industry) pregameParts.push('industry ' + pregameData.industry);
+                pregameParts.push('customer ' + pregameData.customer);
+                pregameParts.push('industry ' + pregameData.industry);
+                pregameParts.push('application ' + pregameData.application);
+                if (pregameData.knownInfo) pregameParts.push('info ' + pregameData.knownInfo);
+                
+                // Add specs if any selected
+                var specParts = [];
+                if (pregameData.specs.micron) specParts.push(pregameData.specs.micron + ' micron');
+                if (pregameData.specs.media) specParts.push(pregameData.specs.media);
+                if (pregameData.specs.temp) specParts.push(pregameData.specs.temp + 'F');
+                if (pregameData.specs.psi) specParts.push(pregameData.specs.psi + ' PSI');
+                if (pregameData.specs.flow) specParts.push(pregameData.specs.flow + ' GPM');
+                if (specParts.length) pregameParts.push('specs ' + specParts.join(', '));
+                
                 sendMessage('pregame ' + pregameParts.join(' | '));
                 resetPregameWizard();
                 return;
