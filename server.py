@@ -174,6 +174,10 @@ class ReportRequest(BaseModel):
     session_id: str = ""
 
 
+class QuoteStateResetRequest(BaseModel):
+    session_id: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -571,10 +575,6 @@ class QuoteRequest(BaseModel):
     items: list = []  # [{part_number, description, quantity, price}]
     notes: str = ""
     session_id: str = ""
-
-
-class QuoteStateResetRequest(BaseModel):
-    session_id: str
 
 
 @app.post("/api/quote")
