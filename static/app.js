@@ -1428,48 +1428,63 @@
         var body = document.getElementById('comparePanelBody');
 
         document.getElementById('comparePanelTitle').textContent = 'Compare Products';
-
-        var html = '';
-
-        // Build dropdown options from products history
-        var optionsHtml = '<option value="">-- Select a product --</option>';
-        productsHistory.forEach(function(prod) {
-            var display = prod.part + (prod.description ? ' — ' + prod.description.substring(0, 40) : '');
-            optionsHtml += '<option value="' + esc(prod.part) + '">' + esc(display) + '</option>';
-        });
-
-        // Part A dropdown — auto-select if we have a pinned/last product
-        var partA = '';
-        if (sessionContext && sessionContext.pinnedPart) {
-            partA = sessionContext.pinnedPart.Part_Number || '';
-        }
-
-        html += '<div style="margin-bottom:16px;">';
-        html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part A</label>';
-        html += '<select id="comparePartA" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
-        html += optionsHtml;
-        html += '</select>';
-        html += '</div>';
-
-        html += '<div style="margin-bottom:16px;">';
-        html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part B</label>';
-        html += '<select id="comparePartB" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
-        html += optionsHtml;
-        html += '</select>';
-        html += '</div>';
-
-        html += '<button onclick="runCompareSelector()" style="width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">Compare Side-by-Side</button>';
-
-        html += '<div id="compareSelectorResults" style="margin-top:16px;"></div>';
-
-        body.innerHTML = html;
+        body.innerHTML = '<div class="compare-loading">Loading part numbers...</div>';
         panel.classList.add('open');
         overlay.classList.add('active');
 
-        // Set Part A if we have a pinned part
-        if (partA) {
-            document.getElementById('comparePartA').value = partA;
-        }
+        // Fetch part numbers from API
+        fetch(API_BASE + '/api/suggest?q=a&mode=starts_with&in_stock=all')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var suggestions = data.suggestions || [];
+                
+                // Build dropdown options from API + products history
+                var optionsHtml = '<option value="">-- Select a P21 Part Number --</option>';
+                
+                // Add products from history first
+                productsHistory.slice(0, 10).forEach(function(prod) {
+                    var display = prod.part + (prod.description ? ' — ' + prod.description.substring(0, 40) : '');
+                    optionsHtml += '<option value="' + esc(prod.part) + '">★ ' + esc(display) + '</option>';
+                });
+                
+                // Add API suggestions
+                suggestions.slice(0, 50).forEach(function(s) {
+                    optionsHtml += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+                });
+
+                // Part A dropdown — auto-select if we have a pinned/last product
+                var partA = '';
+                if (sessionContext && sessionContext.pinnedPart) {
+                    partA = sessionContext.pinnedPart.Part_Number || '';
+                }
+
+                var html = '';
+                html += '<div style="margin-bottom:16px;">';
+                html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part A</label>';
+                html += '<select id="comparePartA" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+                html += optionsHtml;
+                html += '</select>';
+                html += '</div>';
+
+                html += '<div style="margin-bottom:16px;">';
+                html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part B</label>';
+                html += '<select id="comparePartB" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+                html += optionsHtml;
+                html += '</select>';
+                html += '</div>';
+
+                html += '<button onclick="runCompareSelector()" style="width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">Compare Side-by-Side</button>';
+
+                body.innerHTML = html;
+
+                // Set Part A if we have a pinned part
+                if (partA) {
+                    document.getElementById('comparePartA').value = partA;
+                }
+            })
+            .catch(function(err) {
+                body.innerHTML = '<div class="compare-empty">Could not load part numbers. Please try again.</div>';
+            });
     };
 
     window.runCompareSelector = function() {
