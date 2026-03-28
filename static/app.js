@@ -1855,10 +1855,10 @@
 
         switch (type) {
             case 'lookup':
-                modalTitle.textContent = 'Lookup Part';
-                modalLabel.textContent = 'Part Number';
-                modalInput.placeholder = 'e.g., EPF-1234';
-                updateLookupHint();
+                modalTitle.textContent = 'Lookup by Any Code';
+                modalLabel.textContent = 'Enter Code';
+                modalInput.placeholder = 'e.g., HC9600, PN12345, ALT-5678';
+                modalHint.innerHTML = '<strong>Try:</strong> P21 Part Number | Alt Code | Supplier Code | Manufacturer Code<br><small>Voice Echo will search all 4 paths instantly</small>';
                 break;
             case 'chemical':
                 modalTitle.textContent = 'Chemical Compatibility';
@@ -1885,10 +1885,22 @@
                 modalHint.textContent = 'Enter the supplier/OEM part number.';
                 break;
             case 'product_type':
-                modalTitle.textContent = 'Product Type Search';
+                modalTitle.textContent = 'Filter by Product Type';
                 modalLabel.textContent = 'Product Type';
-                modalInput.placeholder = 'e.g., Filter Cartridge';
-                modalHint.textContent = 'Pick a product type from the list or type one.';
+                modalInput.placeholder = 'e.g., Bag Filter, Cartridge, Housing';
+                modalHint.innerHTML = '<strong>Narrow down:</strong> Select product type to filter the catalog<br><small>Crosswalk will show compatible alternatives by type</small>';
+                break;
+            case 'manufacturer':
+                modalTitle.textContent = 'Filter by Manufacturer';
+                modalLabel.textContent = 'Manufacturer';
+                modalInput.placeholder = 'e.g., Pall, Graver, Filtrox';
+                modalHint.innerHTML = '<strong>Narrow down:</strong> Select manufacturer for OEM lookup & crosswalk<br><small>Shows all products + available equivalents</small>';
+                break;
+            case 'specs':
+                modalTitle.textContent = 'Lookup by Specifications';
+                modalLabel.textContent = 'Spec Query';
+                modalInput.placeholder = 'e.g., 10 micron, 150 PSI, polypropylene';
+                modalHint.innerHTML = '<strong>Search by specs:</strong> Micron | Media | Max Temp | Max PSI | Flow Rate<br><small>Voice Echo finds matching products across all manufacturers</small>';
                 break;
             case 'price':
                 modalTitle.textContent = 'Price Check';
@@ -1897,10 +1909,10 @@
                 modalHint.textContent = 'Enter the part number to check pricing.';
                 break;
             case 'compare':
-                modalTitle.textContent = 'Compare Products';
+                modalTitle.textContent = 'Compare & Crosswalk';
                 modalLabel.textContent = 'Parts to Compare';
                 modalInput.placeholder = 'e.g., CLR130 vs CLR140';
-                modalHint.textContent = 'Enter part numbers separated by "vs" or spaces.';
+                modalHint.innerHTML = '<strong>Learning Mode:</strong> Compare specs, pricing, stock + see crosswalk equivalents<br><small>Enter 2+ part numbers separated by "vs" or comma</small>';
                 break;
         }
 
@@ -1969,9 +1981,10 @@
             case 'search': doSearch(val); break;
             case 'manufacturer': sendMessage('manufacturer ' + val); break;
             case 'supplier': sendMessage('supplier ' + val); break;
-            case 'product_type': doSearch(val); break;
+            case 'product_type': sendMessage('product type ' + val); break;
             case 'price': sendMessage('price ' + val); break;
             case 'compare': sendMessage('compare ' + val); break;
+            case 'specs': sendMessage('specs ' + val); break;
         }
     };
 
