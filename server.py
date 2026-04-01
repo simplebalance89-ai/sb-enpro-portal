@@ -304,9 +304,8 @@ async def chemical_check(req: ChemicalRequest):
 
 
 @app.get("/api/suggest")
-async def suggest(q: str = "", mode: str = "exact", in_stock: str = "all"):
-    """Typeahead suggestions for part number lookup. Pandas only, $0 cost.
-    mode: exact (default), starts_with, contains
+async def suggest(q: str = "", in_stock: str = "all"):
+    """Typeahead suggestions for part number lookup. Cascade: exact → starts_with → sequential.
     in_stock: all (default), in_stock (only Qty > 0)
     """
     if not state.data_loaded or len(q) < 2:
@@ -316,7 +315,7 @@ async def suggest(q: str = "", mode: str = "exact", in_stock: str = "all"):
     if in_stock == "in_stock" and "Total_Stock" in df.columns:
         df = df[df["Total_Stock"] > 0]
 
-    suggestions = suggest_parts(df, q, max_results=10, mode=mode)
+    suggestions = suggest_parts(df, q, max_results=10)
     return {"suggestions": suggestions}
 
 

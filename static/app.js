@@ -3319,19 +3319,9 @@
     var voiceMediaRecorder = null;
     var voiceAudioChunks = [];
 
-    // Global search settings
+    // Global search settings - only in stock filter remains
     window.searchSettings = {
-        inStockOnly: false,
-        mode: 'exact' // 'exact' or 'contains'
-    };
-    
-    // Toggle search mode
-    window.setSearchMode = function(mode) {
-        window.searchSettings.mode = mode;
-        document.getElementById('searchModeExact').classList.toggle('active', mode === 'exact');
-        document.getElementById('searchModeExact').style.background = mode === 'exact' ? 'white' : 'var(--bg)';
-        document.getElementById('searchModeContains').classList.toggle('active', mode === 'contains');
-        document.getElementById('searchModeContains').style.background = mode === 'contains' ? 'white' : 'var(--bg)';
+        inStockOnly: false
     };
     
     // Check for voice commands (trigger modals, send, hang up, toggles)
@@ -3367,16 +3357,6 @@
             document.getElementById('inStockFilter').checked = false;
             window.searchSettings.inStockOnly = false;
             appendMessage('bot', '<em>Filter set: All products</em>');
-            return true;
-        }
-        if (/^exact match$/.test(lower)) {
-            setSearchMode('exact');
-            appendMessage('bot', '<em>Search mode: Exact match</em>');
-            return true;
-        }
-        if (/^contains$|^partial$/.test(lower)) {
-            setSearchMode('contains');
-            appendMessage('bot', '<em>Search mode: Contains</em>');
             return true;
         }
         

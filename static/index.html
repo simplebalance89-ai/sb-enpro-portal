@@ -2065,16 +2065,12 @@
 
 <!-- Input -->
 <div class="input-area">
-    <!-- Search Filters -->
+    <!-- In Stock Filter Only -->
     <div class="search-filters" style="display:flex; align-items:center; gap:12px; margin-right:8px;">
         <label class="filter-toggle" style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; color:var(--text-light); white-space:nowrap;">
             <input type="checkbox" id="inStockFilter" style="width:16px; height:16px; cursor:pointer;">
             <span>In Stock</span>
         </label>
-        <div class="filter-toggle" style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--text-light);">
-            <button id="searchModeExact" class="mode-btn active" onclick="setSearchMode('exact')" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px 0 0 4px; background:white; cursor:pointer; font-size:11px;">Exact</button>
-            <button id="searchModeContains" class="mode-btn" onclick="setSearchMode('contains')" style="padding:4px 8px; border:1px solid var(--border); border-left:none; border-radius:0 4px 4px 0; background:var(--bg); cursor:pointer; font-size:11px;">Contains</button>
-        </div>
     </div>
     
     <button class="input-side-btn" disabled title="Attach file" style="opacity:0.35; cursor:not-allowed;">
@@ -2332,6 +2328,6 @@
     </div>
 </div>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
