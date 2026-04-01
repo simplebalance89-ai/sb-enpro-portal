@@ -1217,15 +1217,15 @@
         panel.innerHTML = '<div class="action-panel" id="' + panelId + '">' +
             '<div class="action-panel-header">Next Steps for ' + esc(partNumber) + '</div>' +
             '<div class="action-grid" style="grid-template-columns: 1fr 1fr;">' +
-                '<div class="action-card" onclick="runAction(\'chemical\', \'' + esc(partNumber) + '\', this)" data-action-num="1">' +
+                '<div class="action-card" onclick="startCompareQuote(\'' + esc(partNumber) + '\', this)" data-action-num="1">' +
                     '<div class="action-num">1</div>' +
-                    '<div class="action-label">Chemical Compatibility</div>' +
-                    '<div class="action-desc">Check material compatibility</div>' +
-                '</div>' +
-                '<div class="action-card" onclick="startCompareQuote(\'' + esc(partNumber) + '\', this)" data-action-num="2">' +
-                    '<div class="action-num">2</div>' +
                     '<div class="action-label">Compare</div>' +
                     '<div class="action-desc">Add to quote & compare</div>' +
+                '</div>' +
+                '<div class="action-card" onclick="showModal(\'pregame\')" data-action-num="2">' +
+                    '<div class="action-num">2</div>' +
+                    '<div class="action-label">Customer Pre Game</div>' +
+                    '<div class="action-desc">Meeting prep for this product</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -3341,10 +3341,7 @@
             openCompareSelector();
             return true;
         }
-        if (/^chemical\s+(check|compatibility)/.test(lower)) {
-            showModal('chemical');
-            return true;
-        }
+
         
         // Filter toggles
         if (/^(in stock|only in stock|show in stock)$/.test(lower)) {
