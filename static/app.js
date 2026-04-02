@@ -1471,10 +1471,10 @@
         overlay.classList.add('active');
 
         // Fetch part numbers from API
-        fetch(API_BASE + '/api/suggest?q=aa&in_stock=all')
+        fetch(API_BASE + '/api/parts/list?limit=200&in_stock=all')
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                var suggestions = data.suggestions || [];
+                var parts = data.parts || [];
                 
                 // Build dropdown options from API + products history
                 var optionsHtml = '<option value="">-- Select a P21 Part Number --</option>';
@@ -1485,10 +1485,11 @@
                     optionsHtml += '<option value="' + esc(prod.part) + '">★ ' + esc(display) + '</option>';
                 });
                 
-                // Add API suggestions - handle object format {Part_Number, Description}
-                suggestions.slice(0, 50).forEach(function(s) {
-                    var pn = s.Part_Number || s;
-                    var desc = s.Description || '';
+                // Add API parts
+                parts.slice(0, 200).forEach(function(p) {
+                    var pn = p.Part_Number || '';
+                    var desc = p.Description || '';
+                    if (!pn) return;
                     var display = pn + (desc ? ' — ' + desc.substring(0, 40) : '');
                     optionsHtml += '<option value="' + esc(pn) + '">' + esc(display) + '</option>';
                 });

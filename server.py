@@ -319,6 +319,31 @@ async def suggest(q: str = "", in_stock: str = "all"):
     return {"suggestions": suggestions}
 
 
+@app.get("/api/parts/list")
+async def parts_list(limit: int = 100, in_stock: str = "all"):
+    """Return list of parts for dropdowns. Used by Compare Parts.
+    limit: max number of parts to return (default 100)
+    in_stock: all (default), in_stock (only Qty > 0)
+    """
+    if not state.data_loaded:
+        return {"parts": []}
+
+    df = state.df
+    if in_stock == "in_stock" and "Total_Stock" in df.columns:
+        df = df[df["Total_Stock"] > 0]
+
+    # Return top parts with Part_Number and Description
+    results = []
+    for _, row in df.head(limit).iterrows():
+        results.append({
+            "Part_Number": str(row.get("Part_Number", "")),
+            "Description": str(row.get("Description", "")),
+            "Final_Manufacturer": str(row.get("Final_Manufacturer", row.get("Manufacturer", "")))
+        })
+    
+    return {"parts": results}
+
+
 @app.get("/api/manufacturers/list")
 async def manufacturers_list():
     """Return curated manufacturer list for dropdowns."""
