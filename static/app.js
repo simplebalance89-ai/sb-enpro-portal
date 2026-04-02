@@ -1879,24 +1879,68 @@
     }
 
     function applyPregameWizardStep() {
-        // Single form like original - Industry required, others optional
+        // Original form layout: Industry, Product Type, Manufacturer, Customer Name
         modalTitle.textContent = 'Meeting Pregame';
         modalLabel.textContent = 'Industry';
         modalInput.style.display = 'none';
-        modalHint.innerHTML = '';
         
-        // Show the industry dropdown
-        var indSelect = document.getElementById('industrySelect');
-        if (indSelect) {
-            indSelect.style.display = 'block';
-            if (indSelect.options[0]) indSelect.options[0].text = '-- Select industry --';
-        }
+        // Build the original form HTML
+        var html = '<div style="margin-bottom:16px;">';
+        html += '<label style="display:block; font-size:14px; margin-bottom:6px;">Industry</label>';
+        html += '<select id="pregameIndustry" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<option value="">-- Select industry --</option>';
+        html += '<option value="Brewery">Brewery / Beverage</option>';
+        html += '<option value="Hydraulic">Hydraulic / Lube Oil</option>';
+        html += '<option value="Compressed Air">Compressed Air / Gas</option>';
+        html += '<option value="Wastewater">Wastewater / Water Treatment</option>';
+        html += '<option value="Chemical">Chemical Processing</option>';
+        html += '<option value="Food">Food & Beverage</option>';
+        html += '<option value="Pharmaceutical">Pharmaceutical / Biotech</option>';
+        html += '<option value="Oilfield">Oilfield / Energy</option>';
+        html += '<option value="Mining">Mining / Heavy Industry</option>';
+        html += '<option value="Automotive">Automotive / Manufacturing</option>';
+        html += '<option value="Other">Other / General Industrial</option>';
+        html += '</select>';
+        html += '</div>';
         
-        // Simple single-field approach - just ask for industry and customer
-        modalLabel.textContent = 'Customer or Application';
-        modalInput.placeholder = 'e.g., Acme Brewing, Glycol Dehydration Plant';
-        modalInput.style.display = 'block';
-        modalHint.innerHTML = '<small>Enter customer name, application type, or both</small>';
+        html += '<div style="margin-bottom:16px;">';
+        html += '<label style="display:block; font-size:14px; margin-bottom:6px;">Product Type <span style="color:#666; font-size:12px;">(optional)</span></label>';
+        html += '<select id="pregameProductType" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<option value="">-- Any product type --</option>';
+        html += '<option value="Bag Filter">Bag Filter</option>';
+        html += '<option value="Cartridges">Cartridges</option>';
+        html += '<option value="Elements">Elements</option>';
+        html += '<option value="Housings">Housings</option>';
+        html += '<option value="Membranes">Membranes</option>';
+        html += '<option value="Depth Sheets">Depth Sheets</option>';
+        html += '<option value="Air Filter">Air Filter</option>';
+        html += '</select>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom:16px;">';
+        html += '<label style="display:block; font-size:14px; margin-bottom:6px;">Manufacturer <span style="color:#666; font-size:12px;">(optional)</span></label>';
+        html += '<select id="pregameManufacturer" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<option value="">-- Any manufacturer --</option>';
+        html += '<option value="Pall">Pall</option>';
+        html += '<option value="Graver">Graver</option>';
+        html += '<option value="Filtrox">Filtrox</option>';
+        html += '<option value="Cobetter">Cobetter</option>';
+        html += '<option value="Shelco">Shelco</option>';
+        html += '<option value="Pentair">Pentair</option>';
+        html += '</select>';
+        html += '</div>';
+        
+        html += '<div style="margin-bottom:16px;">';
+        html += '<label style="display:block; font-size:14px; margin-bottom:6px;">Customer Name <span style="color:#666; font-size:12px;">(optional)</span></label>';
+        html += '<input type="text" id="pregameCustomer" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;" placeholder="e.g., Acme Brewing Co.">';
+        html += '</div>';
+        
+        modalHint.innerHTML = html;
+        
+        // Hide other elements
+        var el;
+        el = document.getElementById('industrySelect'); if (el) el.style.display = 'none';
+        el = document.getElementById('specSelects'); if (el) el.style.display = 'none';
     }
 
     window.showModal = function (type) {
@@ -2014,46 +2058,37 @@
 
     window.modalSubmit = function () {
         var val = modalInput.value.trim();
-        if (!val) return;
-
         var type = currentModalType;
         var mode = lookupMode.value;
 
         if (type === 'pregame') {
-            if (pregameStep === 0) {
-                // Step 1: Customer name (required)
-                if (!val) {
-                    alert('Please enter a customer name');
-                    return;
-                }
-                pregameData.customer = val;
-                pregameStep = 1;
-                applyPregameWizardStep();
-                return;
-            } else if (pregameStep === 1) {
-                // Step 2: Application/Industry (optional)
-                var industryVal = document.getElementById('industrySelect').value;
-                pregameData.industry = industryVal || val || '';
-                pregameStep = 2;
-                applyPregameWizardStep();
-                return;
-            } else if (pregameStep === 2) {
-                // Step 3: Additional info (optional) - go straight to results
-                pregameData.knownInfo = val || '';
-                
-                hideModal();
-                
-                // Build simple pregame message
-                var pregameParts = [];
-                pregameParts.push('customer ' + pregameData.customer);
-                if (pregameData.industry) pregameParts.push('industry ' + pregameData.industry);
-                if (pregameData.knownInfo) pregameParts.push('info ' + pregameData.knownInfo);
-                
-                sendMessage('pregame ' + pregameParts.join(' | '));
-                resetPregameWizard();
+            // Single form submission - collect all fields
+            var industry = document.getElementById('pregameIndustry').value;
+            var productType = document.getElementById('pregameProductType').value;
+            var manufacturer = document.getElementById('pregameManufacturer').value;
+            var customer = document.getElementById('pregameCustomer').value.trim();
+            
+            if (!industry) {
+                alert('Please select an industry');
                 return;
             }
+            
+            hideModal();
+            
+            // Build pregame message
+            var pregameParts = [];
+            pregameParts.push('industry ' + industry);
+            if (productType) pregameParts.push('product type ' + productType);
+            if (manufacturer) pregameParts.push('manufacturer ' + manufacturer);
+            if (customer) pregameParts.push('customer ' + customer);
+            
+            sendMessage('pregame ' + pregameParts.join(' | '));
+            resetPregameWizard();
+            return;
         }
+
+        // For non-pregame types, require a value
+        if (!val) return;
 
         hideModal();
 
