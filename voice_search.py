@@ -245,6 +245,7 @@ Return JSON only — no markdown, no explanation. Fields:
 - flow_rate (number): flow rate in GPM
 - in_stock (boolean): true if user specifically asked for in-stock items
 - part_number (string): specific part number if mentioned
+- starts_with (string): part number prefix if user says "starts with" or "beginning with"
 
 Omit fields not mentioned. Use null for uncertain values.
 
@@ -253,7 +254,9 @@ Examples:
 "polypropylene bag 25 micron" → {"media":"Polypropylene","product_type":"Bag Filter","micron":25}
 "CLR510" → {"part_number":"CLR510"}
 "graver 5 micron cartridge rated to 200 degrees" → {"manufacturer":"Graver Technologies","micron":5,"product_type":"Cartridges","max_temp":200}
-"""
+"parts that start with HC" → {"starts_with":"HC"}
+"show me filters beginning with AB" → {"starts_with":"AB"}
+""""
 
 
 async def extract_parameters(transcript: str) -> dict:
@@ -471,6 +474,14 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
     # Build filter mask
     mask = pd.Series(True, index=df.index)
     filters_applied = []
+
+    # Starts with (part number prefix) - handles "parts that start with HC"
+    if params.get("starts_with"):
+        prefix = params["starts_with"]
+        if "Part_Number" in df.columns:
+            # Normalize and check if Part_Number starts with prefix
+            mask &= df["Part_Number"].astype(str).str.upper().str.startswith(prefix.upper())
+            filters_applied.append(f"starts_with={prefix}")
 
     # Manufacturer
     if params.get("manufacturer"):
