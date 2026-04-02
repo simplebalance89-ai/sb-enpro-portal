@@ -389,29 +389,13 @@ def lookup_part(df: pd.DataFrame, part_number: str) -> Optional[dict]:
     return None
 
 
-def _sequential_match(text: str, query: str) -> bool:
-    """Check if query characters appear in sequence within text."""
-    if not text or not query:
-        return False
-    text_lower = text.lower()
-    query_lower = query.lower()
-    
-    # Find each character of query in order
-    idx = 0
-    for char in query_lower:
-        idx = text_lower.find(char, idx)
-        if idx == -1:
-            return False
-        idx += 1  # Move past this character for next search
-    return True
-
-
 def suggest_parts(
-    df: pd.DataFrame, query: str, max_results: int = 10, mode: str = "cascade"
+    df: pd.DataFrame, query: str, max_results: int = 10, mode: str = "exact"
 ) -> list:
     """
-    Fast typeahead suggestions. Cascade: exact → starts_with → sequential substring.
-    Returns list of dicts with Part_Number, Description, Manufacturer.
+    Fast typeahead suggestions. Returns list of dicts with Part_Number, Description, Manufacturer.
+    mode: 'exact' (starts-with priority then contains), 'starts_with' (starts-with only),
+          'contains' (contains only).
     Always returns up to max_results.
     """
     if df.empty or not query or len(query) < 2:
@@ -422,13 +406,10 @@ def suggest_parts(
     results = []
     seen = set()
 
-    def _collect(matches_df, check_fn=None):
-        """Collect results with optional filter function."""
+    def _collect(matches_df):
         for _, row in matches_df.iterrows():
             pn = str(row.get("Part_Number", ""))
             if pn and pn not in seen:
-                if check_fn and not check_fn(pn):
-                    continue
                 seen.add(pn)
                 desc = str(row.get("Description", ""))
                 mfr = str(row.get("Final_Manufacturer", row.get("Manufacturer", "")))
@@ -439,35 +420,28 @@ def suggest_parts(
 
     code_cols = ["Part_Number", "Supplier_Code", "Alt_Code"]
 
-    # Phase 1: Exact match (normalized)
-    for col in code_cols:
-        if col not in df.columns:
-            continue
-        col_norm = df[col].apply(_normalize)
-        if _collect(df[col_norm == norm_query]):
-            return results
+    # Starts-with phase (used by 'exact' and 'starts_with' modes)
+    if mode in ("exact", "starts_with"):
+        for col in code_cols:
+            if col not in df.columns:
+                continue
+            col_norm = df[col].apply(_normalize)
+            if _collect(df[col_norm.str.startswith(norm_query, na=False)]):
+                return results
 
-    # Phase 2: Starts with (normalized)
-    for col in code_cols:
-        if col not in df.columns:
-            continue
-        col_norm = df[col].apply(_normalize)
-        if _collect(df[col_norm.str.startswith(norm_query, na=False)]):
-            return results
+    # Contains phase (used by 'exact' and 'contains' modes)
+    if mode in ("exact", "contains"):
+        for col in code_cols:
+            if col not in df.columns:
+                continue
+            col_norm = df[col].apply(_normalize)
+            if _collect(df[col_norm.str.contains(norm_query, na=False)]):
+                return results
 
-    # Phase 3: Sequential substring (characters must appear in order)
-    # Only check against Part_Number column for this phase
-    if "Part_Number" in df.columns and len(results) < max_results:
-        unmatched = df[~df["Part_Number"].isin(seen)]
-        matches = unmatched[unmatched["Part_Number"].apply(lambda x: _sequential_match(str(x), query))]
-        if _collect(matches):
-            return results
-
-    # Phase 4: Description contains (fallback)
-    if "Description" in df.columns and len(results) < max_results:
-        unmatched = df[~df["Part_Number"].isin(seen)]
-        desc_matches = unmatched[unmatched["Description"].astype(str).str.lower().str.contains(re.escape(query_lower), na=False)]
-        _collect(desc_matches)
+        # Description contains
+        if "Description" in df.columns and len(results) < max_results:
+            desc_lower = df["Description"].astype(str).str.lower()
+            _collect(df[desc_lower.str.contains(re.escape(query_lower), na=False)])
 
     return results
 
