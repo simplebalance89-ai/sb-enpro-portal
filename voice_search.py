@@ -256,7 +256,7 @@ Examples:
 "graver 5 micron cartridge rated to 200 degrees" → {"manufacturer":"Graver Technologies","micron":5,"product_type":"Cartridges","max_temp":200}
 "parts that start with HC" → {"starts_with":"HC"}
 "show me filters beginning with AB" → {"starts_with":"AB"}
-""""
+"""
 
 
 async def extract_parameters(transcript: str) -> dict:
