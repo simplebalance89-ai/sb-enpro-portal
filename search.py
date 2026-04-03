@@ -38,6 +38,7 @@ VISIBLE_FIELDS = [
     "Flow_Rate",
     "Efficiency",
     "Final_Manufacturer",
+    "Last_Sold_Date",
 ]
 
 # Hidden fields — searchable but NEVER displayed

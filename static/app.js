@@ -865,7 +865,7 @@
                     html += '<div class="product-field-value"><a class="card-link" onclick="sendMessage(\'search ' + esc(val).replace(/'/g, "\\'") + '\')">' + esc(val) + '</a></div>';
                 } else if (f[0] === 'Industry') {
                     html += '<div class="product-field-value"><a class="card-link" onclick="sendMessage(\'industry ' + esc(val).replace(/'/g, "\\'") + '\')">' + esc(val) + '</a></div>';
-                } else if (['Micron', 'Media', 'Max Temp', 'Max PSI', 'Flow Rate', 'Efficiency'].includes(f[0])) {
+                } else if (['Micron', 'Media', 'Max Temp', 'Max PSI', 'Flow Rate', 'Efficiency', 'Last Activity'].includes(f[0])) {
                     // Spec fields already have formatting
                     html += '<div class="product-field-value">' + val + '</div>';
                 } else {
@@ -874,6 +874,21 @@
                 html += '</div>';
             }
         });
+
+        // Last Activity
+        var lastActivity = p.Last_Sold_Date || p.last_sold_date || '';
+        if (lastActivity && lastActivity !== '0' && lastActivity.toLowerCase() !== 'nan') {
+            // Format: if it's a timestamp like "2021-07-23 09:32:12.700", show just the date
+            var displayActivity = String(lastActivity);
+            if (/^\d{4}-\d{2}-\d{2}/.test(displayActivity)) {
+                displayActivity = displayActivity.substring(0, 10);
+            }
+            var actColor = '#6b7280';
+            if (displayActivity === 'ACTIVE') actColor = '#059669';
+            else if (/DORMANT_1-2YR/.test(displayActivity)) actColor = '#d97706';
+            else if (/DORMANT_(3|5|10)/.test(displayActivity)) actColor = '#dc2626';
+            fields.push(['Last Activity', '<span style="color:' + actColor + '; font-weight:500;">' + esc(displayActivity) + '</span>']);
+        }
 
         // Stock
         var inventoryEntries = [];
@@ -2149,12 +2164,6 @@
     };
 
     // ── Search Filter Toggles ──
-    var inStockFilter = document.getElementById('inStockFilter');
-    if (inStockFilter) {
-        inStockFilter.addEventListener('change', function() {
-            window.searchSettings.inStockOnly = this.checked;
-        });
-    }
 
     // ── Typeahead / Autocomplete ──
     var suggestDropdown = document.getElementById('suggestDropdown');
@@ -3335,7 +3344,7 @@
     var voiceMediaRecorder = null;
     var voiceAudioChunks = [];
 
-    // Global search settings - only in stock filter remains
+    // Global search settings
     window.searchSettings = {
         inStockOnly: false
     };
@@ -3361,14 +3370,10 @@
         
         // Filter toggles
         if (/^(in stock|only in stock|show in stock)$/.test(lower)) {
-            document.getElementById('inStockFilter').checked = true;
-            window.searchSettings.inStockOnly = true;
             appendMessage('bot', '<em>Filter set: In Stock only</em>');
             return true;
         }
         if (/^(all stock|show all|any stock)$/.test(lower)) {
-            document.getElementById('inStockFilter').checked = false;
-            window.searchSettings.inStockOnly = false;
             appendMessage('bot', '<em>Filter set: All products</em>');
             return true;
         }
