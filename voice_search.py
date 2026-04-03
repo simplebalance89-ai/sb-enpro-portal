@@ -126,9 +126,13 @@ class CatalogVocab:
         self.media_types: list[str] = []
         self.micron_values: list[float] = []
         self.part_numbers: list[str] = []
+        self.applications: list[str] = []
+        self.industries: list[str] = []
         # Phonetic codes for fuzzy matching
         self._mfg_phonetic: dict[str, tuple] = {}
         self._media_phonetic: dict[str, tuple] = {}
+        self._app_phonetic: dict[str, tuple] = {}
+        self._industry_phonetic: dict[str, tuple] = {}
 
     def build(self, df: pd.DataFrame):
         """Extract vocabulary from the product DataFrame."""
@@ -155,16 +159,29 @@ class CatalogVocab:
         if "Part_Number" in df.columns:
             self.part_numbers = df["Part_Number"].dropna().astype(str).str.strip().unique().tolist()
 
+        if "Application" in df.columns:
+            self.applications = sorted(df["Application"].dropna().astype(str).str.strip().unique().tolist())
+            self.applications = [a for a in self.applications if a and a != "0" and a.lower() != "nan"]
+
+        if "Industry" in df.columns:
+            self.industries = sorted(df["Industry"].dropna().astype(str).str.strip().unique().tolist())
+            self.industries = [i for i in self.industries if i and i != "0" and i.lower() != "nan"]
+
         # Pre-compute phonetic codes
         for m in self.manufacturers:
             self._mfg_phonetic[m] = doublemetaphone(m.lower())
         for m in self.media_types:
             self._media_phonetic[m] = doublemetaphone(m.lower())
+        for a in self.applications:
+            self._app_phonetic[a] = doublemetaphone(a.lower())
+        for i in self.industries:
+            self._industry_phonetic[i] = doublemetaphone(i.lower())
 
         logger.info(
             f"Voice vocab built: {len(self.manufacturers)} mfgs, "
             f"{len(self.product_types)} types, {len(self.media_types)} media, "
-            f"{len(self.micron_values)} microns, {len(self.part_numbers)} parts"
+            f"{len(self.micron_values)} microns, {len(self.part_numbers)} parts, "
+            f"{len(self.applications)} apps, {len(self.industries)} industries"
         )
 
 
@@ -453,8 +470,20 @@ def resolve_parameters(params: dict) -> dict:
         resolved["part_number"] = r["resolved"]
         metadata["part_number"] = r
 
+    # Application — fuzzy resolve against catalog
+    if params.get("application"):
+        r = fuzzy_resolve_field(params["application"], _vocab.applications, "application")
+        resolved["application"] = r["resolved"]
+        metadata["application"] = r
+
+    # Industry — fuzzy resolve against catalog
+    if params.get("industry"):
+        r = fuzzy_resolve_field(params["industry"], _vocab.industries, "industry")
+        resolved["industry"] = r["resolved"]
+        metadata["industry"] = r
+
     # Pass-through fields (no fuzzy needed)
-    for key in ("max_temp", "max_psi", "flow_rate", "in_stock", "application", "industry"):
+    for key in ("max_temp", "max_psi", "flow_rate", "in_stock"):
         if params.get(key) is not None:
             resolved[key] = params[key]
 

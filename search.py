@@ -254,6 +254,8 @@ def _search_cascade(df: pd.DataFrame, raw_query: str, norm_query: str) -> pd.Dat
         "Final_Manufacturer",
         "Media",
         "Efficiency",
+        "Application",
+        "Industry",
     ]
     words = raw_query.lower().split()
     if not words:
@@ -291,13 +293,13 @@ def _search_cascade(df: pd.DataFrame, raw_query: str, norm_query: str) -> pd.Dat
         # Also filter by text words (e.g., "filter element", "cartridge")
         non_spec_words = spec_match.get("remaining_words", [])
         if non_spec_words and has_filter:
-            for col in text_cols:
-                if col not in df.columns:
-                    continue
-                col_lower = df[col].astype(str).str.lower()
+            available_text = [c for c in text_cols if c in df.columns]
+            if available_text:
+                combined = df[available_text].astype(str).apply(
+                    lambda row: " ".join(row).lower(), axis=1
+                )
                 for word in non_spec_words:
-                    mask = mask & col_lower.str.contains(re.escape(word), na=False)
-                break  # Only need to match in one text column
+                    mask = mask & combined.str.contains(re.escape(word), na=False)
         if has_filter:
             matches = df[mask]
             if not matches.empty:
