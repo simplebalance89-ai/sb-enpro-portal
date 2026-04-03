@@ -67,10 +67,11 @@ async def _refresh_inventory_loop():
         await asyncio.sleep(3600)  # 1 hour
         try:
             logger.info("Refreshing inventory data...")
-            inv = load_inventory()
+            inv = await asyncio.to_thread(load_inventory)
             if not inv.empty:
+                merged = await asyncio.to_thread(merge_data, state.static_df, inv)
                 state.inventory_df = inv
-                state.df = merge_data(state.static_df, state.inventory_df)
+                state.df = merged
                 state.last_inventory_load = datetime.utcnow()
                 logger.info(f"Inventory refreshed: {len(inv)} rows")
             else:

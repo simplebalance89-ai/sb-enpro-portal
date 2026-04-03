@@ -273,12 +273,15 @@ class VoiceEcho:
                 response_time_ms=response_time_ms
             )
         
-        # Fuzzy match = 70-90%
+        # Fuzzy match — map string confidence to numeric score
         if result.match_confidence:
-            try:
-                pct = 70 + (float(result.match_confidence) * 20)
-            except (TypeError, ValueError):
-                pct = 75.0  # Default for non-numeric confidence
+            confidence_map = {
+                'exact': 95.0,
+                'fuzzy': 80.0,
+                'criteria_match': 70.0,
+                'none': 50.0,
+            }
+            pct = confidence_map.get(result.match_confidence, 75.0)
             return AccuracyGrade(
                 query=query,
                 accuracy_pct=pct,

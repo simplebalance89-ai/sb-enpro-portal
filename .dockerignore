@@ -1,0 +1,9 @@
+data/
+scripts/
+kb/v21/
+*.xlsx
+__pycache__/
+.env
+*.pyc
+playwright-report/
+test-results/

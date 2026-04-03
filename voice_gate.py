@@ -236,11 +236,13 @@ class VoiceGate:
         # Handle stock: use Total_Stock (computed by merge_data)
         in_stock = None
         qty = None
+        stock_known = False
         try:
             total_stock = row.get('Total_Stock', 0)
             if pd.notna(total_stock):
                 qty = int(float(total_stock))
                 in_stock = qty > 0
+                stock_known = True
         except (ValueError, TypeError):
             pass
         
