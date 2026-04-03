@@ -664,7 +664,7 @@
                     showMoreBtn.remove();
                     scrollToBottom();
                 };
-                chatMessages.appendChild(showMoreBtn);
+                chatArea.appendChild(showMoreBtn);
             }
         } else if (data.chemical) {
             appendCard(renderChemicalCard(data.chemical));
@@ -720,7 +720,7 @@
             '<div class="welcome-icon" style="font-size:48px;">&#128270;</div>' +
             '<h2>Filtration Mastermind</h2>' +
             '<p style="font-size:16px; line-height:1.6;">Just ask. Look up a part, compare products, check chemical compatibility, or ask for pricing — type it like you\'d say it.</p>' +
-            '<p style="margin-top:8px; font-size:13px; color:var(--text-light);">19,600+ validated products. Real-time inventory. Real prices.</p>' +
+            '<p style="margin-top:8px; font-size:13px; color:var(--text-light);">19,470 validated products. Real-time inventory. Real prices.</p>' +
             '</div>';
         // Reset state
         searchCount = 0;
