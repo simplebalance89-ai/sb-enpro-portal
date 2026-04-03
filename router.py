@@ -6,6 +6,7 @@ then routes to appropriate handler (Pandas, Scripted, Governance, or GPT-4.1).
 
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -299,6 +300,49 @@ GPT_INTENTS = {"chemical", "pregame", "application", "system_quote", "general", 
 
 
 # ---------------------------------------------------------------------------
+# KB File Loader — read kb/*.md into memory at startup
+# ---------------------------------------------------------------------------
+
+_KB_DIR = Path(__file__).parent / "kb"
+_KB_CACHE: dict[str, str] = {}
+
+
+def _load_kb_files():
+    """Load KB markdown files into memory at startup."""
+    if not _KB_DIR.exists():
+        logger.warning(f"KB directory not found: {_KB_DIR}")
+        return
+    for f in _KB_DIR.glob("*.md"):
+        _KB_CACHE[f.stem.lower()] = f.read_text(encoding="utf-8")
+    logger.info(f"Loaded {len(_KB_CACHE)} KB files ({sum(len(v) for v in _KB_CACHE.values()):,} bytes)")
+
+
+_load_kb_files()
+
+# Map KB_SECTION_MAP keywords to KB file stems for deep context
+_KB_FILE_MAP = {
+    "filter": "kb_filters_v25",
+    "element": "kb_filters_v25",
+    "cartridge": "kb_filters_v25",
+    "micron": "kb_filters_v25",
+    "beta": "kb_filters_v25",
+    "nominal": "kb_filters_v25",
+    "absolute": "kb_filters_v25",
+    "vessel": "kb_equipment_v25",
+    "housing": "kb_equipment_v25",
+    "equipment": "kb_equipment_v25",
+    "chemical": "chemical_compatibility",
+    "compatibility": "chemical_compatibility",
+    "acid": "chemical_compatibility",
+    "pricing": "61_pricing_reference",
+    "quote": "vessel_quote_template",
+    "governance": "43_governance_refusals_edgecases",
+    "constraint": "42_constraints_rules",
+    "demo": "demo_modes_v25",
+}
+
+
+# ---------------------------------------------------------------------------
 # KB Section Lookup
 # ---------------------------------------------------------------------------
 
@@ -340,13 +384,30 @@ def _lookup_kb_section(topic: str) -> Optional[str]:
     the application knowledge and product recommendations as context.
     """
     topic_lower = topic.lower()
+    context_parts = []
+
+    # Match against KB_SECTION_MAP for structured recommendations
     for keyword, (section, title, products) in KB_SECTION_MAP.items():
         if keyword in topic_lower:
-            return (
+            context_parts.append(
                 f"[KB SECTION CONTEXT] Application: {title}\n"
-                f"Recommended Products: {products}\n"
-                f"RULE: Use this knowledge to inform your response but NEVER show section numbers, KB references, or internal labels to the user."
+                f"Recommended Products: {products}"
             )
+            break
+
+    # Inject deep KB file content if available (truncated to 2000 chars)
+    for keyword, file_stem in _KB_FILE_MAP.items():
+        if keyword in topic_lower and file_stem in _KB_CACHE:
+            kb_text = _KB_CACHE[file_stem][:2000]
+            context_parts.append(f"[KB DOMAIN KNOWLEDGE]\n{kb_text}")
+            break
+
+    if context_parts:
+        context_parts.append(
+            "RULE: Use this knowledge to inform your response but NEVER show "
+            "section numbers, KB references, or internal labels to the user."
+        )
+        return "\n\n".join(context_parts)
     return None
 
 
