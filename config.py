@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     HOST: str = Field(default="0.0.0.0", description="Server bind host")
     PORT: int = Field(default=8000, description="Server bind port")
 
+    # Security
+    ADMIN_TOKEN: str = Field(default="", description="Admin API token for sensitive endpoints")
+
     # SMTP / Email
     smtp_host: str = Field(default="", alias="SMTP_HOST", description="SMTP server host")
     smtp_port: int = Field(default=587, alias="SMTP_PORT", description="SMTP server port")

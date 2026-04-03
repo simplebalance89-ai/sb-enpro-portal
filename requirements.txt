@@ -8,3 +8,4 @@ httpx==0.28.1
 python-multipart==0.0.20
 rapidfuzz==3.12.2
 metaphone==0.6
+slowapi==0.1.9

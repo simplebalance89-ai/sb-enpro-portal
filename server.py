@@ -11,11 +11,14 @@ from typing import Optional
 
 import httpx
 import pandas as pd
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from config import settings
 from data_loader import load_static, load_inventory, load_chemicals, merge_data
@@ -148,6 +151,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting — protect Azure OpenAI spend
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Admin auth dependency — require X-Admin-Token header if ADMIN_TOKEN is set
+async def verify_admin(x_admin_token: str = Header(default="")):
+    if settings.ADMIN_TOKEN and x_admin_token != settings.ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 
 # ---------------------------------------------------------------------------
 # Request/Response models
@@ -212,7 +226,8 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+@limiter.limit("20/minute")
+async def chat(request: Request, req: ChatRequest):
     """
     Main chat endpoint. Classifies intent, runs governance, routes to handler.
     """
@@ -278,7 +293,8 @@ async def search(req: SearchRequest):
 
 
 @app.post("/api/chemical")
-async def chemical_check(req: ChemicalRequest):
+@limiter.limit("15/minute")
+async def chemical_check(request: Request, req: ChemicalRequest):
     """
     Chemical compatibility check. Routes through GPT-4.1 with chemical crosswalk context.
     """
@@ -496,7 +512,7 @@ async def report_product(req: ReportRequest):
         return {"status": "error", "detail": str(e)}
 
 
-@app.get("/api/reports")
+@app.get("/api/reports", dependencies=[Depends(verify_admin)])
 async def get_reports():
     """Get all filed reports (admin view)."""
     import os
@@ -530,8 +546,9 @@ class EmailReportRequest(BaseModel):
     reports: list = Field(default_factory=list)
 
 
-@app.post("/api/email-report")
-async def email_report(req: EmailReportRequest):
+@app.post("/api/email-report", dependencies=[Depends(verify_admin)])
+@limiter.limit("3/minute")
+async def email_report(request: Request, req: EmailReportRequest):
     """Email reports to Peter. Uses SMTP configured via environment variables."""
     import smtplib
     from email.mime.text import MIMEText
@@ -731,7 +748,8 @@ async def stt(file: UploadFile = File(...)):
 
 
 @app.post("/api/voice-search")
-async def voice_search(file: UploadFile = File(...)):
+@limiter.limit("15/minute")
+async def voice_search(request: Request, file: UploadFile = File(...)):
     """
     Full voice search pipeline: audio → STT → pre-process → extract → fuzzy resolve → search.
     Accepts audio blob, returns product results with confidence metadata.
