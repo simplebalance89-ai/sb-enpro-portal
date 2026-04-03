@@ -1349,23 +1349,14 @@
             html += '</div></div>';
         }
 
-        // Manual compare input with dropdown
+        // Manual compare input with typeahead
         html += '<div style="padding: 0 0 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;">';
         html += '<label style="font-size:13px; font-weight:600; margin-bottom:6px; display:block;">Compare with:</label>';
-        html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
-        html += '<select id="compareManualSelect" style="flex:1; min-width:200px; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; background:white;">';
-        html += '<option value="">-- Select a part --</option>';
-        // Add products from history
-        if (productsHistory && productsHistory.length > 0) {
-            html += '<optgroup label="Recently Viewed">';
-            productsHistory.slice(0, 10).forEach(function(prod) {
-                var display = prod.part + (prod.description ? ' — ' + prod.description.substring(0, 40) : '');
-                html += '<option value="' + esc(prod.part) + '">' + esc(display) + '</option>';
-            });
-            html += '</optgroup>';
-        }
-        html += '</select>';
-        html += '<input type="text" id="compareManualInput" placeholder="Or type part number..." onkeydown="if(event.key===\'Enter\')runCompareManual(\'' + esc(sourcePartNumber) + '\')" style="flex:1; min-width:150px; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px;">';
+        html += '<div style="display:flex; gap:8px; flex-wrap:wrap; position:relative;">';
+        html += '<div style="flex:1; min-width:200px; position:relative;">';
+        html += '<input type="text" id="compareManualInput" placeholder="Type 2+ chars to search parts..." autocomplete="off" onkeydown="if(event.key===\'Enter\')runCompareManual(\'' + esc(sourcePartNumber) + '\')" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+        html += '<div id="suggestManual" style="display:none; position:absolute; top:100%; left:0; right:0; background:white; border:1px solid var(--border); border-radius:0 0 6px 6px; max-height:200px; overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);"></div>';
+        html += '</div>';
         html += '<button class="quote-btn-primary" style="flex:none; padding:10px 16px;" onclick="runCompareManual(\'' + esc(sourcePartNumber) + '\')">Compare</button>';
         html += '</div></div>';
 
@@ -1408,34 +1399,35 @@
 
         body.innerHTML = html;
 
-        // Load suggestions into the dropdown
-        var compareManualSelect = document.getElementById('compareManualSelect');
-        if (compareManualSelect) {
-            fetch(API_BASE + '/api/suggest?q=a&mode=starts_with&in_stock=all')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var suggestions = data.suggestions || [];
-                    if (suggestions.length > 0) {
-                        var optionsHtml = '<option value="">-- Select a part --</option>';
-                        if (productsHistory && productsHistory.length > 0) {
-                            optionsHtml += '<optgroup label="Recently Viewed">';
-                            productsHistory.slice(0, 10).forEach(function(prod) {
-                                var display = prod.part + (prod.description ? ' — ' + prod.description.substring(0, 40) : '');
-                                optionsHtml += '<option value="' + esc(prod.part) + '">' + esc(display) + '</option>';
+        // Wire up typeahead on manual compare input
+        var manualInput = document.getElementById('compareManualInput');
+        var manualDropdown = document.getElementById('suggestManual');
+        if (manualInput && manualDropdown) {
+            var debounce = null;
+            manualInput.addEventListener('input', function() {
+                clearTimeout(debounce);
+                var q = manualInput.value.trim();
+                if (q.length < 2) { manualDropdown.style.display = 'none'; return; }
+                debounce = setTimeout(function() {
+                    fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(q))
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            var sugs = data.suggestions || [];
+                            if (sugs.length === 0) { manualDropdown.style.display = 'none'; return; }
+                            var items = '';
+                            sugs.forEach(function(s) {
+                                var pn = s.Part_Number || s.part_number || s;
+                                var desc = s.Description || s.description || '';
+                                items += '<div style="padding:8px 12px; cursor:pointer; border-bottom:1px solid #f0f0f0; font-size:13px;" onmousedown="document.getElementById(\'compareManualInput\').value=\'' + esc(String(pn)).replace(/'/g, "\\'") + '\'; document.getElementById(\'suggestManual\').style.display=\'none\';">' + esc(pn + (desc ? ' -- ' + desc.substring(0, 40) : '')) + '</div>';
                             });
-                            optionsHtml += '</optgroup>';
-                        }
-                        optionsHtml += '<optgroup label="All Parts">';
-                        suggestions.slice(0, 100).forEach(function(s) {
-                            optionsHtml += '<option value="' + esc(s.Part_Number || s) + '">' + esc(s.Part_Number || s) + '</option>';
+                            manualDropdown.innerHTML = items;
+                            manualDropdown.style.display = 'block';
                         });
-                        optionsHtml += '</optgroup>';
-                        compareManualSelect.innerHTML = optionsHtml;
-                    }
-                })
-                .catch(function() {
-                    // Keep the default options
-                });
+                }, 200);
+            });
+            manualInput.addEventListener('blur', function() {
+                setTimeout(function() { manualDropdown.style.display = 'none'; }, 200);
+            });
         }
     }
 
@@ -1478,9 +1470,8 @@
     }
 
     window.runCompareManual = function (sourcePn) {
-        var select = document.getElementById('compareManualSelect');
         var input = document.getElementById('compareManualInput');
-        var target = (select && select.value) || (input && input.value.trim());
+        var target = input && input.value.trim();
         if (!target) {
             alert('Please select or enter a part number to compare');
             return;
@@ -1500,60 +1491,72 @@
         panel.classList.add('open');
         overlay.classList.add('active');
 
-        // Fetch part numbers from API
-        fetch(API_BASE + '/api/parts/list?limit=200&in_stock=all')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                var parts = data.parts || [];
-                
-                // Build dropdown options from API + products history
-                var optionsHtml = '<option value="">-- Select a P21 Part Number --</option>';
-                
-                // Add products from history first
-                productsHistory.slice(0, 10).forEach(function(prod) {
-                    var display = prod.part + (prod.description ? ' — ' + prod.description.substring(0, 40) : '');
-                    optionsHtml += '<option value="' + esc(prod.part) + '">★ ' + esc(display) + '</option>';
-                });
-                
-                // Add API parts
-                parts.slice(0, 200).forEach(function(p) {
-                    var pn = p.Part_Number || '';
-                    var desc = p.Description || '';
-                    if (!pn) return;
-                    var display = pn + (desc ? ' — ' + desc.substring(0, 40) : '');
-                    optionsHtml += '<option value="' + esc(pn) + '">' + esc(display) + '</option>';
-                });
-
-                // Part A dropdown — auto-select if we have a pinned/last product
+        // Build typeahead compare form (no bulk dropdown load)
+        (function() {
                 var partA = '';
                 if (sessionContext && sessionContext.pinnedPart) {
                     partA = sessionContext.pinnedPart.Part_Number || '';
                 }
 
                 var html = '';
-                html += '<div style="margin-bottom:16px;">';
+
+                // Recently viewed quick picks
+                if (productsHistory && productsHistory.length > 0) {
+                    html += '<div style="margin-bottom:12px; font-size:12px; color:var(--text-light);">Recent: ';
+                    productsHistory.slice(0, 5).forEach(function(prod) {
+                        html += '<span style="cursor:pointer; color:var(--accent); margin-right:8px;" onclick="document.getElementById(\'comparePartA\').value=\'' + esc(prod.part) + '\'">' + esc(prod.part) + '</span>';
+                    });
+                    html += '</div>';
+                }
+
+                html += '<div style="margin-bottom:16px; position:relative;">';
                 html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part A</label>';
-                html += '<select id="comparePartA" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
-                html += optionsHtml;
-                html += '</select>';
+                html += '<input type="text" id="comparePartA" value="' + esc(partA) + '" placeholder="Type 2+ characters to search..." autocomplete="off" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+                html += '<div id="suggestA" class="compare-suggest-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:white; border:1px solid var(--border); border-radius:0 0 6px 6px; max-height:200px; overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);"></div>';
                 html += '</div>';
 
-                html += '<div style="margin-bottom:16px;">';
+                html += '<div style="margin-bottom:16px; position:relative;">';
                 html += '<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Part B</label>';
-                html += '<select id="comparePartB" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
-                html += optionsHtml;
-                html += '</select>';
+                html += '<input type="text" id="comparePartB" placeholder="Type 2+ characters to search..." autocomplete="off" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">';
+                html += '<div id="suggestB" class="compare-suggest-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:white; border:1px solid var(--border); border-radius:0 0 6px 6px; max-height:200px; overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);"></div>';
                 html += '</div>';
 
                 html += '<button onclick="runCompareSelector()" style="width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">Compare Side-by-Side</button>';
 
                 body.innerHTML = html;
 
-                // Set Part A if we have a pinned part
-                if (partA) {
-                    document.getElementById('comparePartA').value = partA;
-                }
-            })
+                // Wire up typeahead for both inputs
+                ['A', 'B'].forEach(function(label) {
+                    var input = document.getElementById('comparePart' + label);
+                    var dropdown = document.getElementById('suggest' + label);
+                    var debounce = null;
+                    input.addEventListener('input', function() {
+                        clearTimeout(debounce);
+                        var q = input.value.trim();
+                        if (q.length < 2) { dropdown.style.display = 'none'; return; }
+                        debounce = setTimeout(function() {
+                            fetch(API_BASE + '/api/suggest?q=' + encodeURIComponent(q))
+                                .then(function(r) { return r.json(); })
+                                .then(function(data) {
+                                    var sugs = data.suggestions || [];
+                                    if (sugs.length === 0) { dropdown.style.display = 'none'; return; }
+                                    var items = '';
+                                    sugs.forEach(function(s) {
+                                        var pn = s.Part_Number || s.part_number || s;
+                                        var desc = s.Description || s.description || '';
+                                        var display = pn + (desc ? ' -- ' + desc.substring(0, 40) : '');
+                                        items += '<div style="padding:8px 12px; cursor:pointer; border-bottom:1px solid #f0f0f0; font-size:13px;" onmousedown="document.getElementById(\'comparePart' + label + '\').value=\'' + esc(String(pn)).replace(/'/g, "\\'") + '\'; document.getElementById(\'suggest' + label + '\').style.display=\'none\';">' + esc(display) + '</div>';
+                                    });
+                                    dropdown.innerHTML = items;
+                                    dropdown.style.display = 'block';
+                                });
+                        }, 200);
+                    });
+                    input.addEventListener('blur', function() {
+                        setTimeout(function() { dropdown.style.display = 'none'; }, 200);
+                    });
+                });
+            })()
             .catch(function(err) {
                 body.innerHTML = '<div class="compare-empty">Could not load part numbers. Please try again.</div>';
             });
