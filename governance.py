@@ -41,7 +41,7 @@ ESCALATION_RESPONSE = (
 OUT_OF_SCOPE_PATTERNS = [
     r"\b(weather|stock market|recipe|joke|poem|song|movie|game)\b",
     r"\b(who is|what year|capital of|president)\b",
-    r"\b(write me|create a|generate a)\b(?!.*quote)",
+    r"\b(write me|create a|generate a)\b(?!.*(quote|comparison|compare|pregame|summary|list|report))",
 ]
 
 OUT_OF_SCOPE_RESPONSE = "Outside my scope. I'm built for filtration."
@@ -154,8 +154,8 @@ def _check_volume_pricing(message: str, context: Optional[dict] = None) -> Optio
 def _check_shipping(message: str, context: Optional[dict] = None) -> Optional[dict]:
     """Detect shipping/delivery questions — not our domain."""
     shipping_patterns = [
-        r"\b(shipping|delivery|freight|tracking|ship|deliver)\b",
-        r"\b(lead time|when.*arrive|eta)\b",
+        r"\b(shipping cost|delivery date|freight charge|tracking number|ship to|deliver to)\b",
+        r"\b(lead time|when.*arrive|eta|ship.*order)\b",
     ]
     msg_lower = message.lower()
     for pattern in shipping_patterns:

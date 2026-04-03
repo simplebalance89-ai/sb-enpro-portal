@@ -698,14 +698,17 @@
         checkAutoReset();
     }
 
-    // ── New Chat / Auto-reset after 10 searches ──
+    // ── New Chat / Auto-reset after 50 searches (soft warning at 40) ──
     function checkAutoReset() {
-        if (searchCount >= 10) {
+        if (searchCount === 40) {
             appendMessage('bot', formatMarkdown(
-                '**Session limit reached (10 searches).** Starting a fresh chat to keep things fast.\n\n' +
-                'Your previous results are cleared. Use the command bar above to continue.'
+                'You\'ve run **40 searches** in this session. Consider starting a **New Chat** for best performance.'
             ));
-            setTimeout(function () { newChat(); }, 2000);
+        } else if (searchCount >= 50) {
+            appendMessage('bot', formatMarkdown(
+                '**Session limit reached (50 searches).** Starting a fresh chat to keep things fast.'
+            ));
+            setTimeout(function () { newChat(); }, 3000);
         }
     }
 

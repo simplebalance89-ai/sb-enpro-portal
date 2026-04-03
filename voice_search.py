@@ -210,7 +210,6 @@ def preprocess_transcript(text: str) -> str:
         pattern = r'\b' + re.escape(voice_term) + r'\b'
         if re.search(pattern, lower, re.IGNORECASE):
             lower = re.sub(pattern, canonical, lower, flags=re.IGNORECASE)
-            break  # Only apply first (longest) match to avoid conflicts
 
     return lower
 
