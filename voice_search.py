@@ -546,12 +546,21 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
             )
             filters_applied.append(f"media={params['media']}")
 
-    # Micron (exact)
+    # Micron (exact first, then ±20% range if exact returns nothing)
     if params.get("micron") is not None:
         if "Micron" in df.columns:
+            target_micron = float(params["micron"])
             micron_col = pd.to_numeric(df["Micron"], errors="coerce").fillna(0)
-            mask &= micron_col == float(params["micron"])
-            filters_applied.append(f"micron={params['micron']}")
+            exact_mask = micron_col == target_micron
+            if exact_mask.any():
+                mask &= exact_mask
+                filters_applied.append(f"micron={target_micron}")
+            else:
+                # Fallback: ±20% range (0.5 matches 0.4-0.6, 10 matches 8-12)
+                low = target_micron * 0.8
+                high = target_micron * 1.2
+                mask &= (micron_col >= low) & (micron_col <= high)
+                filters_applied.append(f"micron≈{target_micron}")
 
     # Max temp (products rated AT or ABOVE)
     if params.get("max_temp") is not None:
@@ -592,42 +601,51 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
     results_df = df[mask]
     total_found = len(results_df)
 
-    # Relaxation: if multi-filter returns 0, drop least critical filter and retry
+    # Relaxation: if multi-filter returns 0, progressively drop filters and retry
     if total_found == 0 and len(filters_applied) >= 2:
-        # Drop least critical filters first — keep manufacturer and product_type last
+        # Drop least critical filters first — keep manufacturer and micron last
         relax_order = ["in_stock", "max_psi", "max_temp", "industry", "application", "media", "product_type"]
+        dropped = []
+
+        def _build_relaxed_mask(skip_keys):
+            """Build mask with specified keys skipped."""
+            rmask = pd.Series(True, index=df.index)
+            all_keys = ["manufacturer", "product_type", "media", "micron", "max_temp", "max_psi", "application", "industry", "in_stock"]
+            for fkey in all_keys:
+                if fkey in skip_keys or params.get(fkey) is None:
+                    continue
+                if fkey == "manufacturer":
+                    mfg_col2 = "Final_Manufacturer" if "Final_Manufacturer" in df.columns else "Manufacturer"
+                    rmask &= df[mfg_col2].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                elif fkey == "product_type" and "Product_Type" in df.columns:
+                    rmask &= df["Product_Type"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                elif fkey == "media" and "Media" in df.columns:
+                    rmask &= df["Media"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                elif fkey == "micron" and "Micron" in df.columns:
+                    rmask &= pd.to_numeric(df["Micron"], errors="coerce").fillna(0) == float(params[fkey])
+                elif fkey == "max_temp" and "Max_Temp_F" in df.columns:
+                    rmask &= pd.to_numeric(df["Max_Temp_F"], errors="coerce").fillna(0) >= float(params[fkey])
+                elif fkey == "max_psi" and "Max_PSI" in df.columns:
+                    rmask &= pd.to_numeric(df["Max_PSI"], errors="coerce").fillna(0) >= float(params[fkey])
+                elif fkey == "application" and "Application" in df.columns:
+                    rmask &= df["Application"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                elif fkey == "industry" and "Industry" in df.columns:
+                    rmask &= df["Industry"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                elif fkey == "in_stock" and params[fkey] and "Total_Stock" in df.columns:
+                    rmask &= df["Total_Stock"] > 0
+            return rmask
+
+        # Try dropping 1 filter, then 2, then 3
         for drop_key in relax_order:
-            if params.get(drop_key) is not None:
-                relaxed_mask = pd.Series(True, index=df.index)
-                all_keys = ["manufacturer", "product_type", "media", "micron", "max_temp", "max_psi", "application", "industry", "in_stock"]
-                for fkey in all_keys:
-                    if fkey == drop_key or params.get(fkey) is None:
-                        continue
-                    if fkey == "manufacturer":
-                        mfg_col2 = "Final_Manufacturer" if "Final_Manufacturer" in df.columns else "Manufacturer"
-                        relaxed_mask &= df[mfg_col2].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
-                    elif fkey == "product_type" and "Product_Type" in df.columns:
-                        relaxed_mask &= df["Product_Type"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
-                    elif fkey == "media" and "Media" in df.columns:
-                        relaxed_mask &= df["Media"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
-                    elif fkey == "micron" and "Micron" in df.columns:
-                        relaxed_mask &= pd.to_numeric(df["Micron"], errors="coerce").fillna(0) == float(params[fkey])
-                    elif fkey == "max_temp" and "Max_Temp_F" in df.columns:
-                        relaxed_mask &= pd.to_numeric(df["Max_Temp_F"], errors="coerce").fillna(0) >= float(params[fkey])
-                    elif fkey == "max_psi" and "Max_PSI" in df.columns:
-                        relaxed_mask &= pd.to_numeric(df["Max_PSI"], errors="coerce").fillna(0) >= float(params[fkey])
-                    elif fkey == "application" and "Application" in df.columns:
-                        relaxed_mask &= df["Application"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
-                    elif fkey == "industry" and "Industry" in df.columns:
-                        relaxed_mask &= df["Industry"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
-                    elif fkey == "in_stock" and params[fkey] and "Total_Stock" in df.columns:
-                        relaxed_mask &= df["Total_Stock"] > 0
-                relaxed_df = df[relaxed_mask]
-                if 0 < len(relaxed_df) <= 50:
-                    results_df = relaxed_df
-                    total_found = len(results_df)
-                    filters_applied.append(f"relaxed(dropped {drop_key})")
-                    break
+            if params.get(drop_key) is None:
+                continue
+            dropped.append(drop_key)
+            relaxed_df = df[_build_relaxed_mask(dropped)]
+            if 0 < len(relaxed_df) <= 200:
+                results_df = relaxed_df
+                total_found = len(results_df)
+                filters_applied.append(f"relaxed(dropped {','.join(dropped)})")
+                break
 
     # Prefer in-stock results if not already filtered
     if not params.get("in_stock") and "Total_Stock" in results_df.columns and not results_df.empty:
@@ -709,6 +727,19 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
                 "overall_confidence": 1.0,
                 "suggestions": [],
                 "filters_applied": [f"part_number={part_num}"],
+            }
+        # Part number detected but not found — don't fall back to text search
+        # (prevents hallucinations where "FAKE12345" matches random products)
+        if len(cleaned.split()) <= 2:
+            return {
+                "results": [],
+                "total_found": 0,
+                "transcript": transcript,
+                "cleaned_transcript": cleaned,
+                "search_type": "voice_part_not_found",
+                "overall_confidence": 0.0,
+                "suggestions": [],
+                "filters_applied": [f"part_number={part_num}(not_found)"],
             }
 
     # Step 3: Extract parameters
