@@ -174,14 +174,14 @@ class VoiceGate:
             # Try exact Alt_Code first
             if query in self.alt_code_index:
                 row = self.alt_code_index[query]
-                mfg = str(row.get('Manufacturer', '')).upper()
+                mfg = str(row.get('Final_Manufacturer', row.get('Manufacturer', ''))).upper()
                 if 'PALL' in mfg:
                     return self._row_to_result(row, 'exact', 'Pall_Alt_Code')
             
             # Try Part_Number
             if query in self.part_number_index:
                 row = self.part_number_index[query]
-                mfg = str(row.get('Manufacturer', '')).upper()
+                mfg = str(row.get('Final_Manufacturer', row.get('Manufacturer', ''))).upper()
                 if 'PALL' in mfg:
                     return self._row_to_result(row, 'exact', 'Pall_Part_Number')
         
@@ -233,31 +233,15 @@ class VoiceGate:
         except:
             pass
         
-        # Handle stock: NULL/NaN = None (UNKNOWN - never say "out of stock")
-        in_stock_raw = row.get('In_Stock')
+        # Handle stock: use Total_Stock (computed by merge_data)
         in_stock = None
-        stock_known = False
-        
-        if pd.notna(in_stock_raw):
-            if isinstance(in_stock_raw, bool):
-                in_stock = in_stock_raw
-                stock_known = True
-            elif isinstance(in_stock_raw, str):
-                val = in_stock_raw.lower()
-                if val in ['true', 'yes', 'y', '1', 't']:
-                    in_stock = True
-                    stock_known = True
-                elif val in ['false', 'no', 'n', '0', 'f']:
-                    in_stock = False
-                    stock_known = True
-        
-        # Handle quantity
-        qty_raw = row.get('Qty_On_Hand')
         qty = None
         try:
-            if pd.notna(qty_raw):
-                qty = int(float(qty_raw))
-        except:
+            total_stock = row.get('Total_Stock', 0)
+            if pd.notna(total_stock):
+                qty = int(float(total_stock))
+                in_stock = qty > 0
+        except (ValueError, TypeError):
             pass
         
         # Helper to get clean string
@@ -270,7 +254,7 @@ class VoiceGate:
             part_number=get_str('Part_Number'),
             alt_code=get_str('Alt_Code'),
             supplier_code=get_str('Supplier_Code'),
-            manufacturer=get_str('Manufacturer'),
+            manufacturer=get_str('Final_Manufacturer') or get_str('Manufacturer'),
             description=get_str('Description'),
             in_stock=in_stock,  # None = UNKNOWN
             qty_on_hand=qty,
@@ -367,27 +351,17 @@ class VoiceGate:
             
             # Manufacturer filter
             if manufacturer:
-                mfg = str(row.get('Manufacturer', '')).upper()
+                mfg = str(row.get('Final_Manufacturer', row.get('Manufacturer', ''))).upper()
                 if manufacturer.upper() not in mfg:
                     continue
             
-            # In stock filter
+            # In stock filter — use Total_Stock
             if in_stock_only:
-                stock = row.get('In_Stock')
-                if pd.isna(stock):
-                    continue
-                # Handle various types
                 try:
-                    if hasattr(stock, '__iter__') and not isinstance(stock, str):
-                        # It's a Series or list, skip
+                    total = float(row.get('Total_Stock', 0) or 0)
+                    if total <= 0:
                         continue
-                    if isinstance(stock, bool) and not stock:
-                        continue
-                    if isinstance(stock, str) and stock.lower() in ['false', 'no', '0', 'f']:
-                        continue
-                    if isinstance(stock, (int, float)) and stock == 0:
-                        continue
-                except:
+                except (ValueError, TypeError):
                     continue
             
             matches.append(self._row_to_result(row, 'criteria_match', 'search_by_criteria'))

@@ -259,6 +259,8 @@ Return JSON only — no markdown, no explanation. Fields:
 - max_temp (number): maximum temperature in Fahrenheit
 - max_psi (number): maximum PSI rating
 - flow_rate (number): flow rate in GPM
+- application (string): primary application (Hydraulic, Compressed Air, Water Treatment, HVAC, Oil & Gas, Pharmaceutical, Food & Beverage, Chemical Processing, Paint & Coatings, Power Generation)
+- industry (string): industry served (Industrial, Oil & Gas, Food & Beverage, Pharmaceutical, Water Treatment, Chemical, Power, Automotive, Semiconductor, Marine)
 - in_stock (boolean): true if user specifically asked for in-stock items
 - part_number (string): specific part number if mentioned
 
@@ -268,6 +270,8 @@ Examples:
 "10 micron pall filter in stock" → {"manufacturer":"Pall","micron":10,"in_stock":true}
 "polypropylene bag 25 micron" → {"media":"Polypropylene","product_type":"Bag Filter","micron":25}
 "CLR510" → {"part_number":"CLR510"}
+"compressed air filter element" → {"application":"Compressed Air","product_type":"Elements"}
+"pharmaceutical water treatment filter" → {"application":"Water Treatment","industry":"Pharmaceutical"}
 "graver 5 micron cartridge rated to 200 degrees" → {"manufacturer":"Graver Technologies","micron":5,"product_type":"Cartridges","max_temp":200}
 """
 
@@ -562,12 +566,13 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
     # Relaxation: if multi-filter returns 0, drop least critical filter and retry
     if total_found == 0 and len(filters_applied) >= 2:
         # Try dropping application/industry first, then media, then product_type
-        relax_order = ["application", "industry", "media", "product_type"]
+        relax_order = ["application", "industry", "media", "product_type", "max_temp", "max_psi", "in_stock"]
         for drop_key in relax_order:
-            if params.get(drop_key):
+            if params.get(drop_key) is not None:
                 relaxed_mask = pd.Series(True, index=df.index)
-                for fkey in ["manufacturer", "product_type", "media", "micron", "max_temp", "max_psi", "application", "industry"]:
-                    if fkey == drop_key or not params.get(fkey):
+                all_keys = ["manufacturer", "product_type", "media", "micron", "max_temp", "max_psi", "application", "industry", "in_stock"]
+                for fkey in all_keys:
+                    if fkey == drop_key or params.get(fkey) is None:
                         continue
                     if fkey == "manufacturer":
                         mfg_col2 = "Final_Manufacturer" if "Final_Manufacturer" in df.columns else "Manufacturer"
@@ -578,10 +583,16 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
                         relaxed_mask &= df["Media"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
                     elif fkey == "micron" and "Micron" in df.columns:
                         relaxed_mask &= pd.to_numeric(df["Micron"], errors="coerce").fillna(0) == float(params[fkey])
+                    elif fkey == "max_temp" and "Max_Temp_F" in df.columns:
+                        relaxed_mask &= pd.to_numeric(df["Max_Temp_F"], errors="coerce").fillna(0) >= float(params[fkey])
+                    elif fkey == "max_psi" and "Max_PSI" in df.columns:
+                        relaxed_mask &= pd.to_numeric(df["Max_PSI"], errors="coerce").fillna(0) >= float(params[fkey])
                     elif fkey == "application" and "Application" in df.columns:
                         relaxed_mask &= df["Application"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
                     elif fkey == "industry" and "Industry" in df.columns:
                         relaxed_mask &= df["Industry"].astype(str).str.contains(re.escape(params[fkey]), case=False, na=False)
+                    elif fkey == "in_stock" and params[fkey] and "Total_Stock" in df.columns:
+                        relaxed_mask &= df["Total_Stock"] > 0
                 relaxed_df = df[relaxed_mask]
                 if len(relaxed_df) > 0:
                     results_df = relaxed_df

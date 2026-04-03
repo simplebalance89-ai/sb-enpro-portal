@@ -180,9 +180,9 @@ class SuggestRequest(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    part_number: str
-    reason: str = ""
-    session_id: str = ""
+    part_number: str = Field(max_length=200)
+    reason: str = Field(default="", max_length=500)
+    session_id: str = Field(default="", max_length=100)
 
 
 class QuoteStateResetRequest(BaseModel):
@@ -509,7 +509,7 @@ async def get_reports():
 
 
 class CompareSuggestRequest(BaseModel):
-    part_number: str
+    part_number: str = Field(max_length=200)
 
 
 @app.post("/api/compare-suggestions")
@@ -524,9 +524,9 @@ async def compare_suggestions(req: CompareSuggestRequest):
 
 
 class EmailReportRequest(BaseModel):
-    subject: str = "Enpro FM Portal — Report"
-    body: str = ""
-    reports: list = []
+    subject: str = Field(default="Enpro FM Portal — Report", max_length=200)
+    body: str = Field(default="", max_length=2000)
+    reports: list = Field(default_factory=list)
 
 
 @app.post("/api/email-report")
@@ -606,14 +606,14 @@ async def email_report(req: EmailReportRequest):
 
 
 class QuoteRequest(BaseModel):
-    company: str = ""
-    contact_name: str = ""
-    contact_email: str = ""
-    contact_phone: str = ""
-    ship_to: str = ""
-    items: list = []  # [{part_number, description, quantity, price}]
-    notes: str = ""
-    session_id: str = ""
+    company: str = Field(default="", max_length=200)
+    contact_name: str = Field(default="", max_length=200)
+    contact_email: str = Field(default="", max_length=200)
+    contact_phone: str = Field(default="", max_length=50)
+    ship_to: str = Field(default="", max_length=500)
+    items: list = Field(default_factory=list)
+    notes: str = Field(default="", max_length=2000)
+    session_id: str = Field(default="", max_length=100)
 
 
 @app.post("/api/quote")
@@ -708,6 +708,8 @@ async def stt(file: UploadFile = File(...)):
     audio_bytes = await file.read()
     if not audio_bytes:
         return JSONResponse(status_code=400, content={"error": "Empty audio file."})
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        return JSONResponse(status_code=413, content={"error": "Audio file too large (max 25MB)."})
 
     try:
         transcript = await _transcribe(
@@ -793,9 +795,9 @@ async def voice_search_text(req: ChatRequest):
 # ---------------------------------------------------------------------------
 
 class VoiceEchoRequest(BaseModel):
-    query: str
+    query: str = Field(max_length=500)
     session_id: str = "default"
-    defer: bool = False  # If True, return "looking it up" and echo back later
+    defer: bool = False
 
 
 class VoiceEchoStatusRequest(BaseModel):

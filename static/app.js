@@ -1556,10 +1556,7 @@
                         setTimeout(function() { dropdown.style.display = 'none'; }, 200);
                     });
                 });
-            })()
-            .catch(function(err) {
-                body.innerHTML = '<div class="compare-empty">Could not load part numbers. Please try again.</div>';
-            });
+            })();
     };
 
     window.runCompareSelector = function() {
