@@ -603,8 +603,8 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
 
     # Relaxation: if multi-filter returns 0, progressively drop filters and retry
     if total_found == 0 and len(filters_applied) >= 2:
-        # Drop least critical filters first — keep manufacturer and micron last
-        relax_order = ["in_stock", "max_psi", "max_temp", "industry", "application", "media", "product_type"]
+        # Drop least critical filters first — keep manufacturer last
+        relax_order = ["in_stock", "max_psi", "max_temp", "industry", "application", "media", "product_type", "micron"]
         dropped = []
 
         def _build_relaxed_mask(skip_keys):
@@ -754,6 +754,28 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
         result["suggestions"] = []
         return result
 
+    # Step 3b: Strip part_number from params if it doesn't exist in catalog
+    # (prevents hallucinations — "FAKE12345 10 micron" would otherwise match on specs alone)
+    _had_fake_pn = False
+    if params.get("part_number"):
+        from search import lookup_part as _lp
+        if not _lp(df, params["part_number"]):
+            logger.info(f"Voice search — stripped non-existent part_number: {params['part_number']}")
+            _had_fake_pn = True
+            del params["part_number"]
+            # If nothing left after stripping, return not found
+            if not any(v for k, v in params.items() if v is not None):
+                return {
+                    "results": [],
+                    "total_found": 0,
+                    "transcript": transcript,
+                    "cleaned_transcript": cleaned,
+                    "search_type": "voice_part_not_found",
+                    "overall_confidence": 0.0,
+                    "suggestions": [],
+                    "filters_applied": [],
+                }
+
     # Step 4: Fuzzy resolve
     resolved = resolve_parameters(params)
 
@@ -764,7 +786,8 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
     result["raw_params"] = params
 
     # Step 6: If voice query returned nothing, fall back to text search
-    if not result["results"]:
+    # But NOT if we stripped a fake part number (would hallucinate)
+    if not result["results"] and not _had_fake_pn:
         fallback = search_products(df, cleaned)
         if fallback["results"]:
             result["results"] = fallback["results"]
