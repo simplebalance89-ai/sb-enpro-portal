@@ -52,6 +52,11 @@ def load_static() -> pd.DataFrame:
             logger.info(f"Dropped {len(drop_source)} _Source columns")
         rename = {c: c.replace("_Final", "") for c in df.columns if c.endswith("_Final")}
         if rename:
+            # Drop original columns that would conflict with renamed _Final columns
+            conflicts = [target for target in rename.values() if target in df.columns]
+            if conflicts:
+                df = df.drop(columns=conflicts, errors="ignore")
+                logger.info(f"Dropped {len(conflicts)} columns superseded by _Final: {conflicts}")
             df = df.rename(columns=rename)
             logger.info(f"Renamed {len(rename)} _Final columns: {list(rename.values())}")
         logger.info(f"Static crosswalk loaded: {len(df)} rows, {len(df.columns)} columns")

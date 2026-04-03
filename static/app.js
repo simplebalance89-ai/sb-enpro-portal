@@ -946,12 +946,7 @@
         }
 
         html += '</div>'; // body
-
-        // Card actions removed � keeping it simple
-        html += '</div>';
-
-
-        html += '</div>';
+        html += '</div>'; // card
         return html;
     };
 
@@ -2038,12 +2033,6 @@
                 modalLabel.textContent = 'Search Query';
                 modalInput.placeholder = 'e.g., 10 micron bag filter';
                 modalHint.textContent = 'Describe what you need — specs, type, application.';
-                break;
-            case 'manufacturer':
-                modalTitle.textContent = 'Manufacturer Search';
-                modalLabel.textContent = 'Manufacturer Name';
-                modalInput.placeholder = 'e.g., Pall, Graver, Filtrox';
-                modalHint.textContent = 'Enter manufacturer name to see their products.';
                 break;
             case 'supplier':
                 modalTitle.textContent = 'Supplier Code Lookup';

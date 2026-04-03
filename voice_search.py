@@ -594,8 +594,8 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
 
     # Relaxation: if multi-filter returns 0, drop least critical filter and retry
     if total_found == 0 and len(filters_applied) >= 2:
-        # Try dropping application/industry first, then media, then product_type
-        relax_order = ["application", "industry", "media", "product_type", "max_temp", "max_psi", "in_stock"]
+        # Drop least critical filters first — keep manufacturer and product_type last
+        relax_order = ["in_stock", "max_psi", "max_temp", "industry", "application", "media", "product_type"]
         for drop_key in relax_order:
             if params.get(drop_key) is not None:
                 relaxed_mask = pd.Series(True, index=df.index)
@@ -623,7 +623,7 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
                     elif fkey == "in_stock" and params[fkey] and "Total_Stock" in df.columns:
                         relaxed_mask &= df["Total_Stock"] > 0
                 relaxed_df = df[relaxed_mask]
-                if len(relaxed_df) > 0:
+                if 0 < len(relaxed_df) <= 50:
                     results_df = relaxed_df
                     total_found = len(results_df)
                     filters_applied.append(f"relaxed(dropped {drop_key})")
