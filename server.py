@@ -160,7 +160,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="1.0.0",
+    version="2.1.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -181,6 +181,19 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Auth router (/api/auth/login, /logout, /me)
 app.include_router(auth.router)
+
+
+# Prevent stale HTML — browsers must revalidate index.html / login.html on every load.
+# Static assets (JS/CSS/images) can still be cached normally.
+@app.middleware("http")
+async def no_cache_html(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 # Admin auth dependency — require X-Admin-Token header if ADMIN_TOKEN is set
