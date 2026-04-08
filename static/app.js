@@ -846,6 +846,82 @@
     };
 
     // ── Render product card ──
+    // ── Conversational voice-search response renderer (Phase 2c) ──
+    // Replaces the old "X products found" data-dump header with a ranked,
+    // reasoned list. Reads data.recommendations (Phase 2 GPT re-rank) and
+    // matches each part_number against data.results / data.candidates to
+    // find the full product record. Falls through to the legacy card list
+    // for any results that aren't in the recommendations payload.
+    window.renderVoiceResponse = function (data) {
+        var recs = (data && data.recommendations) || [];
+        var results = (data && data.results) || [];
+        var candidates = (data && data.candidates) || [];
+        var pool = results.concat(candidates); // matched-by-PN lookup pool
+
+        function findProductByPN(pn) {
+            if (!pn) return null;
+            var target = String(pn).trim().toUpperCase();
+            for (var i = 0; i < pool.length; i++) {
+                var p = pool[i] || {};
+                var candidate = (p.Part_Number || p.part_number || p.Alt_Code || p.alt_code || '').toString().trim().toUpperCase();
+                if (candidate === target) return p;
+            }
+            return null;
+        }
+
+        var rendered = {};
+
+        if (recs.length > 0) {
+            // Lead with conversational header
+            var lead = recs.length === 1 ? "Here's the strongest fit:" : "Here are the strongest fits:";
+            appendMessage('bot', lead);
+
+            // Render each recommendation as: reason callout + product card
+            recs.forEach(function (rec) {
+                var pn = (rec.part_number || '').toString().trim().toUpperCase();
+                if (!pn) return;
+                var product = findProductByPN(pn);
+                if (!product) return; // skip orphan recs
+
+                // Reason callout — soft-blue panel above the card
+                var reasonHtml =
+                    '<div class="fm-rec-reason" style="' +
+                    'background:#eef4ff;border-left:3px solid #0066CC;' +
+                    'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
+                    'font-size:14px;line-height:1.5;color:#0a1628;">' +
+                    esc(rec.reason || '') +
+                    '</div>';
+                appendMessage('bot', reasonHtml);
+
+                // Then the full product card
+                appendCard(renderProductCard(product));
+                rendered[pn] = true;
+            });
+        }
+
+        // Show remaining results below as "more options" if there are any
+        // not already covered by recommendations.
+        var leftover = results.filter(function (p) {
+            var pn = (p.Part_Number || p.part_number || p.Alt_Code || '').toString().trim().toUpperCase();
+            return pn && !rendered[pn];
+        });
+
+        if (leftover.length > 0) {
+            if (recs.length > 0) {
+                appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
+            }
+            leftover.forEach(function (product) {
+                appendCard(renderProductCard(product));
+            });
+        }
+
+        // Edge case: no recs AND no leftover (shouldn't happen since caller
+        // guards on data.results.length > 0, but be defensive).
+        if (recs.length === 0 && leftover.length === 0) {
+            appendCard(renderVoiceFallbackCard(data.transcript || '', data));
+        }
+    };
+
     window.renderProductCard = function (p) {
         // Track this product in history for compare dropdowns
         var pn = p.Part_Number || p.part_number || 'Product';
@@ -3578,12 +3654,16 @@
 
                     // Render product results using existing card renderer
                     if (data.results && data.results.length > 0) {
-                        var count = data.total_found || data.results.length;
-                        appendMessage('bot', '<strong>' + count + ' product' + (count !== 1 ? 's' : '') + ' found</strong>' +
-                            (data.filters_applied ? ' <span style="color:#666;font-size:12px;">(' + data.filters_applied.join(', ') + ')</span>' : ''));
-                        data.results.forEach(function (product) {
-                            appendCard(renderProductCard(product));
-                        });
+                        // New conversational layout (V2.6+):
+                        // 1. If the backend returned ranked recommendations
+                        //    with reasoning (Phase 2 GPT re-rank), show those
+                        //    FIRST as "the strongest fits" with the reason
+                        //    woven into the product card.
+                        // 2. Show remaining results below as "other options"
+                        //    so the rep can still scan more if they want.
+                        // 3. Drop the raw "1515 products found" header — that's
+                        //    the data dump Andrew called out as the core failure.
+                        renderVoiceResponse(data);
                     } else {
                         appendCard(renderVoiceFallbackCard(data.transcript || '', data));
                     }
