@@ -654,6 +654,9 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
             results_df = stocked
 
     results = [format_product(row) for _, row in results_df.head(5).iterrows()]
+    # Top 30 candidates for the optional GPT re-rank pass in voice_search_pipeline.
+    # We pre-format them so the reranker doesn't need DataFrame access.
+    candidates = [format_product(row) for _, row in results_df.head(30).iterrows()]
 
     # Calculate overall confidence
     field_confidences = [v.get("confidence", 0) for v in confidence.values() if isinstance(v, dict)]
@@ -673,6 +676,7 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
 
     return {
         "results": results,
+        "candidates": candidates,
         "total_found": total_found,
         "has_more": total_found > 5,
         "query": " + ".join(filters_applied) if filters_applied else "voice search",
@@ -682,6 +686,103 @@ def voice_query(df: pd.DataFrame, resolved: dict) -> dict:
         "suggestions": suggestions,
         "filters_applied": filters_applied,
     }
+
+
+# ---------------------------------------------------------------------------
+# GPT Re-Rank — pick top 3 from candidates with one-line reasons
+# ---------------------------------------------------------------------------
+
+_RERANK_SYSTEM_PROMPT = (
+    "You are a filtration sales colleague helping a rep narrow a search result "
+    "down to the 3 strongest fits. You will receive a user query and a JSON list "
+    "of candidate products from the catalog. Pick the 3 best matches and explain "
+    "each in ONE plain sentence — the reason a sales rep would actually give a "
+    "customer. Do NOT invent products. Do NOT use any product not in the input "
+    "list. Do NOT round or estimate specs. Respond with JSON ONLY in this exact "
+    'shape: {"recommendations":[{"part_number":"...","reason":"..."},'
+    '{"part_number":"...","reason":"..."},'
+    '{"part_number":"...","reason":"..."}]}'
+)
+
+
+def _compact_candidate(p: dict) -> dict:
+    """Strip a formatted product down to the fields the reranker actually needs."""
+    return {
+        "Part_Number": p.get("Part_Number") or p.get("Alt_Code") or "",
+        "Description": (p.get("Description") or "")[:120],
+        "Manufacturer": p.get("Manufacturer") or p.get("Final_Manufacturer") or "",
+        "Micron": p.get("Micron"),
+        "Media": p.get("Media"),
+        "Application": p.get("Application"),
+        "Max_PSI": p.get("Max_PSI"),
+        "Max_Temp_F": p.get("Max_Temp_F"),
+        "Price": p.get("Price"),
+        "In_Stock": p.get("Total_Stock", 0) > 0 if p.get("Total_Stock") is not None else None,
+    }
+
+
+async def _gpt_rerank(query: str, candidates: list) -> list:
+    """
+    Ask gpt-4.1-mini to pick the top 3 candidates and explain each in one
+    sentence. Returns a list of {part_number, reason} dicts. Best-effort —
+    failures are non-fatal and the caller falls back to the unranked top 5.
+
+    Anti-hallucination guardrail: any returned part_number that isn't in the
+    input candidate list is dropped.
+    """
+    from azure_client import chat_completion
+    from config import settings as _settings
+
+    if not candidates:
+        return []
+
+    compact = [_compact_candidate(c) for c in candidates[:30]]
+    valid_pns = {
+        str(c.get("Part_Number") or "").strip().upper()
+        for c in compact
+        if c.get("Part_Number")
+    }
+
+    user_content = (
+        f"User query: {query}\n\n"
+        f"Candidates ({len(compact)}):\n"
+        f"{json.dumps(compact, indent=2, default=str)}"
+    )
+
+    data = await chat_completion(
+        deployment=_settings.AZURE_DEPLOYMENT_ROUTER,
+        messages=[
+            {"role": "system", "content": _RERANK_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.1,
+        max_tokens=512,
+    )
+
+    raw = data["choices"][0]["message"]["content"].strip()
+    # Strip code fences if present
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning(f"GPT rerank returned non-JSON: {raw[:200]}")
+        return []
+
+    recs_in = parsed.get("recommendations") or []
+    recs_out = []
+    for r in recs_in:
+        if not isinstance(r, dict):
+            continue
+        pn = str(r.get("part_number") or "").strip().upper()
+        reason = str(r.get("reason") or "").strip()
+        if pn and reason and pn in valid_pns:
+            recs_out.append({"part_number": pn, "reason": reason})
+        elif pn and pn not in valid_pns:
+            logger.warning(f"GPT rerank hallucinated part_number: {pn}")
+    return recs_out[:3]
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +891,21 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
     result["transcript"] = transcript
     result["cleaned_transcript"] = cleaned
     result["raw_params"] = params
+
+    # Step 5b: GPT re-rank — when there are multiple candidates, ask
+    # gpt-4.1-mini to pick the top 3 with one-line reasons. This is the
+    # difference between "400 results" and "here are the 3 strongest fits
+    # because..." that Andrew called out as the missing piece. Bounded by
+    # candidate count so we don't burn tokens on tiny result sets or empty
+    # ones; the original `results` list is preserved for backward compat.
+    candidates = result.get("candidates") or []
+    if len(candidates) >= 3:
+        try:
+            recs = await _gpt_rerank(cleaned, candidates)
+            if recs:
+                result["recommendations"] = recs
+        except Exception as rerank_err:
+            logger.warning(f"GPT rerank failed (non-fatal): {rerank_err}")
 
     # Step 6: If voice query returned nothing, fall back to text search
     # But NOT if we stripped a fake part number (would hallucinate)
