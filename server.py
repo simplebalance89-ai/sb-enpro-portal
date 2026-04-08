@@ -41,8 +41,9 @@ from voice_echo import VoiceEcho
 
 import auth
 import conversation_memory
-from db import close_db, get_session, init_db, is_ready as db_ready
+from db import close_db, get_session, init_db, is_ready as db_ready, session_factory
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 logger = logging.getLogger("enpro.server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -160,7 +161,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.2.0",
+    version="2.3.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -264,16 +265,68 @@ async def health():
     }
 
 
+# ---------------------------------------------------------------------------
+# Auth + memory helpers — shared by /api/chat, /api/chemical, /api/voice-search-text
+# ---------------------------------------------------------------------------
+
+async def _chat_auth_and_history(request: Request) -> tuple[Optional[int], list]:
+    """
+    Phase 1 of any history-aware endpoint: short DB session, fetch user +
+    recent history. Returns (user_id, history). Raises HTTPException 401 if
+    auth is required and missing/invalid. Soft-falls to (None, []) if DB is
+    not configured. ONLY swallows DB connection errors so a real auth bug
+    surfaces in logs and to the client instead of silently downgrading.
+    """
+    if not db_ready():
+        return None, []
+    try:
+        async with session_factory()() as session:
+            user = await auth.get_current_user(request, session)
+            history = await conversation_memory.get_recent_history(session, user.id)
+            return user.id, history
+    except HTTPException:
+        raise
+    except (OperationalError, DBAPIError, ConnectionError) as e:
+        logger.error(f"DB connection error during auth/history fetch: {e}", exc_info=True)
+        return None, []
+
+
+async def _persist_turn(
+    user_id: Optional[int],
+    user_message: str,
+    assistant_message: str,
+    products: Optional[list] = None,
+) -> None:
+    """
+    Phase 3: short DB session, append the (user, assistant) pair to memory.
+    No-op if user_id is None or DB is unconfigured. Errors are logged but
+    never raised — persistence failure must not break the user-facing reply.
+    """
+    if user_id is None or not db_ready():
+        return
+    try:
+        async with session_factory()() as session:
+            await conversation_memory.append_turn(
+                session,
+                user_id=user_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                products=products,
+            )
+    except Exception as e:
+        logger.error(f"Failed to persist conversation turn: {e}")
+
+
 @app.post("/api/chat")
 @limiter.limit("20/minute")
 async def chat(request: Request, req: ChatRequest):
     """
     Main chat endpoint. Classifies intent, runs governance, routes to handler.
 
-    DB strategy (Phase 0 fix): three short-lived sessions, never holding a
-    connection across the GPT call. Phase 1 = auth + history fetch. Phase 2 =
-    handler / GPT (no DB). Phase 3 = persist the turn. Soft-falls to legacy
-    stateless mode if DATABASE_URL is unconfigured.
+    DB strategy: three short-lived sessions, never holding a connection
+    across the GPT call. Phase 1 = auth + history fetch. Phase 2 = handler.
+    Phase 3 = persist the turn. Soft-falls to legacy stateless mode if
+    DATABASE_URL is unconfigured.
     """
     if not state.data_loaded:
         return JSONResponse(
@@ -281,25 +334,8 @@ async def chat(request: Request, req: ChatRequest):
             content={"error": "Data not loaded yet. Try again in a moment."},
         )
 
-    user_id: Optional[int] = None
-    history: list = []
+    user_id, history = await _chat_auth_and_history(request)
 
-    # ── Phase 1: auth + history fetch (short DB session) ──
-    if db_ready():
-        try:
-            from db import session_factory
-            async with session_factory()() as session:
-                user = await auth.get_current_user(request, session)
-                user_id = user.id
-                history = await conversation_memory.get_recent_history(session, user_id)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Auth/history fetch failed: {e}", exc_info=True)
-            user_id = None
-            history = []
-
-    # ── Phase 2: run handler — NO DB connection held ──
     try:
         update_from_message(req.session_id, req.message, state.df)
         result = await handle_message(
@@ -321,28 +357,30 @@ async def chat(request: Request, req: ChatRequest):
             },
         )
 
-    # ── Phase 3: persist the turn (short DB session) ──
-    if user_id is not None and db_ready():
-        try:
-            from db import session_factory
-            async with session_factory()() as session:
-                await conversation_memory.append_turn(
-                    session,
-                    user_id=user_id,
-                    user_message=req.message,
-                    assistant_message=result.get("response", ""),
-                )
-        except Exception as e:
-            logger.error(f"Failed to persist conversation turn: {e}")
-
+    await _persist_turn(
+        user_id,
+        req.message,
+        result.get("response", ""),
+        products=result.get("products"),
+    )
     return result
 
 
 @app.post("/api/chat/reset")
-async def chat_reset(request: Request, db_session: AsyncSession = Depends(get_session)):
-    """Clear the logged-in user's conversation memory ('start fresh')."""
-    user = await auth.get_current_user(request, db_session)
-    deleted = await conversation_memory.clear_user_history(db_session, user.id)
+async def chat_reset(request: Request):
+    """Clear the logged-in user's conversation memory ('start fresh').
+
+    Soft-fall: returns 503 if auth/DB is not configured (consistent with
+    /api/chat) instead of crashing on the dependency injector.
+    """
+    if not db_ready():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Auth/memory not configured"},
+        )
+    async with session_factory()() as session:
+        user = await auth.get_current_user(request, session)
+        deleted = await conversation_memory.clear_user_history(session, user.id)
     return {"ok": True, "deleted": deleted}
 
 
@@ -383,21 +421,32 @@ async def search(req: SearchRequest):
 @limiter.limit("15/minute")
 async def chemical_check(request: Request, req: ChemicalRequest):
     """
-    Chemical compatibility check. Routes through GPT-4.1 with chemical crosswalk context.
+    Chemical compatibility check. Routes through GPT-4.1 with chemical
+    crosswalk context. History-aware: pulls 7-day memory and persists turn.
     """
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
+    user_id, history = await _chat_auth_and_history(request)
+    chem_message = f"Chemical compatibility: {req.chemical}"
+
     try:
         update_from_message(req.session_id, req.chemical, state.df, intent="chemical")
         result = await handle_message(
-            message=f"Chemical compatibility: {req.chemical}",
+            message=chem_message,
             session_id=req.session_id or "chemical_check",
             mode="standard",
             df=state.df,
             chemicals_df=state.chemicals_df,
+            history=history or None,
         )
         result["quote_state"] = update_from_chemical(req.session_id, req.chemical)
+        await _persist_turn(
+            user_id,
+            chem_message,
+            result.get("response", ""),
+            products=result.get("products"),
+        )
         return result
     except Exception as e:
         logger.error(f"Chemical check error: {e}")
@@ -877,23 +926,40 @@ async def voice_search(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/voice-search-text")
-async def voice_search_text(req: ChatRequest):
+async def voice_search_text(request: Request, req: ChatRequest):
     """
     Voice search pipeline from text (for testing without mic).
-    Same pipeline as voice-search but skips STT.
+    Same pipeline as voice-search but skips STT. History-aware: persists
+    transcript turn into the user's 7-day memory so voice queries are
+    visible in future coreference upgrades.
     """
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
+    user_id, _history = await _chat_auth_and_history(request)
+
     try:
         result = await voice_search_pipeline(req.message, state.df)
-        return result
     except Exception as e:
         logger.error(f"Voice search text error: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"error": f"Voice search failed: {str(e)}"},
         )
+
+    # Render a compact assistant summary so the memory layer captures something
+    # meaningful (not just the empty pipeline metadata).
+    products = result.get("results") or []
+    total = result.get("total_found", len(products))
+    if products:
+        first = products[0] if isinstance(products[0], dict) else {}
+        first_pn = first.get("Part_Number") or first.get("Alt_Code") or "(unknown)"
+        summary = f"Voice search returned {total} results. Top: {first_pn}."
+    else:
+        summary = "Voice search returned no matches."
+
+    await _persist_turn(user_id, req.message, summary, products=products)
+    return result
 
 
 # ---------------------------------------------------------------------------

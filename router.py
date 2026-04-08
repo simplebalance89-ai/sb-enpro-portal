@@ -20,25 +20,82 @@ logger = logging.getLogger("enpro.router")
 # Coreference markers — when one of these appears in the user's message AND
 # we have non-empty conversation history, route the message through the GPT
 # path so the model can resolve "those parts" / "the second one" / "compare them"
-# against prior context. Without this, pandas-routed intents (lookup, compare,
-# manufacturer, supplier, price) silently drop history and the user's
-# follow-up gets misinterpreted as a fresh search.
+# against prior context. Bare pronouns (it, this, that, they, them, previous,
+# prior, earlier) are intentionally EXCLUDED — they false-positive on
+# legitimate fresh queries like "is it in stock?", "previous experience with
+# Donaldson", "are they NSF 61?". Only multi-word anchors that strongly imply
+# a prior turn reference qualify.
 import re as _coref_re
 _COREF_PATTERN = _coref_re.compile(
-    r"\b("
-    r"that|those|these|this|it|them|they|"
-    r"the (?:first|second|third|fourth|fifth|last|previous|other|same|one|two|three) (?:one|option|product|part|filter|item)?|"
-    r"first one|second one|third one|last one|other one|"
-    r"previous|prior|earlier|just (?:showed|mentioned|said)|"
-    r"(?:compare|recompare) (?:them|those|these)"
-    r")\b",
+    r"("
+    r"\bthose\s+(?:parts?|filters?|products?|options?|items?|two|three|four|five)\b|"
+    r"\bthese\s+(?:parts?|filters?|products?|options?|items?)\b|"
+    r"\bthat\s+(?:part|filter|product|option|item|one)\b|"
+    r"\bthe\s+(?:first|second|third|fourth|fifth|last|previous|other|same)\s+(?:one|option|product|part|filter|item)?\b|"
+    r"\b(?:first|second|third|last|other)\s+one\b|"
+    r"\bjust\s+(?:showed|mentioned|said)\b|"
+    r"\b(?:compare|recompare)\s+(?:them|those|these|the\s+(?:two|three))\b|"
+    r"\bwhat\s+(?:about|did\s+you\s+say)\s+(?:those|that|the\s+(?:first|second|third|last))\b"
+    r")",
     _coref_re.IGNORECASE,
 )
 
 
 def _has_coreference(message: str) -> bool:
-    """Detect references to prior conversation turns."""
+    """Detect references to prior conversation turns. Conservative — false
+    positives are worse than false negatives because they upgrade $0 lookups
+    into $0.02 GPT calls."""
     return bool(_COREF_PATTERN.search(message))
+
+
+# Part-number-ish token regex used by both the validator and history mining.
+_PN_TOKEN_RE = _coref_re.compile(
+    r"\b([A-Z]{1,5}[\d][\w\-/]{2,30}|[\d]{4,10})\b"
+)
+
+
+def _collect_history_part_numbers(history: Optional[list]) -> set[str]:
+    """Extract every part number that appears in prior turns — both from the
+    structured `products` payloads attached to assistant turns AND from
+    regex-mining the rendered text. Used to seed the validator's known_pns
+    so legitimate prior-turn parts aren't flagged as hallucinations."""
+    found: set[str] = set()
+    if not history:
+        return found
+    for msg in history:
+        # Structured products attached to assistant turns
+        prods = msg.get("products") if isinstance(msg, dict) else None
+        if isinstance(prods, list):
+            for p in prods:
+                if not isinstance(p, dict):
+                    continue
+                for key in ("Part_Number", "Alt_Code", "Supplier_Code", "part_number", "alt_code"):
+                    val = p.get(key)
+                    if val:
+                        found.add(str(val).strip().upper())
+        # Text-mined PNs from message content
+        content = msg.get("content", "") if isinstance(msg, dict) else ""
+        if content:
+            for m in _PN_TOKEN_RE.finditer(content):
+                token = m.group(1).strip().upper()
+                if len(token) >= 4:
+                    found.add(token)
+    return found
+
+
+def _most_recent_history_products(history: Optional[list]) -> Optional[list]:
+    """Walk history newest-to-oldest, return the first non-empty `products`
+    list. This is the structured snapshot we re-inject when a coreference
+    upgrade fires ("compare those two")."""
+    if not history:
+        return None
+    for msg in reversed(history):
+        if not isinstance(msg, dict):
+            continue
+        prods = msg.get("products")
+        if isinstance(prods, list) and prods:
+            return prods
+    return None
 
 # ---------------------------------------------------------------------------
 # System Prompts
@@ -960,6 +1017,21 @@ async def _handle_gpt(
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
 
+    # Coreference support — inject the most recent non-empty prior-turn
+    # products as a separate, clearly-labeled block. Lets the model actually
+    # answer "compare those two" / "what was the second one's price" using
+    # real structured data instead of having to reconstruct from rendered
+    # markdown buried in chat history.
+    prior_products = _most_recent_history_products(history)
+    if prior_products:
+        prior_json = json.dumps(prior_products[:5], indent=2, default=str)
+        context_parts.append(
+            f"[PRIOR TURN PRODUCTS — from this user's most recent search]:\n{prior_json}\n"
+            "If the user is referencing prior turns ('that part', 'those filters', "
+            "'compare them', 'the second one'), use THIS list. Otherwise prefer "
+            "[RELEVANT PRODUCTS FROM CATALOG] above."
+        )
+
     # Anti-hallucination guardrail — force GPT to only use provided data
     context_parts.append(
         "[CRITICAL DATA INTEGRITY RULE]\n"
@@ -1009,8 +1081,11 @@ async def _handle_gpt(
             logger.warning(f"Post-check issues: {post_check['issues']}")
             response = sanitize_response(response)
 
-        # Anti-hallucination: validate part numbers in response against catalog
-        response = _validate_response_parts(response, search_result.get("results", []), df)
+        # Anti-hallucination: validate part numbers in response against catalog,
+        # unioned with prior-turn PNs from this user's history (G7 fix)
+        response = _validate_response_parts(
+            response, search_result.get("results", []), df, history=history
+        )
 
         # Strip internal KB references from user-facing output
         response = _strip_kb_references(response)
@@ -1074,22 +1149,37 @@ def _strip_kb_references(response: str) -> str:
 # Anti-hallucination validation
 # ---------------------------------------------------------------------------
 
-def _validate_response_parts(response: str, provided_products: list, df: pd.DataFrame) -> str:
+def _validate_response_parts(
+    response: str,
+    provided_products: list,
+    df: pd.DataFrame,
+    history: Optional[list] = None,
+) -> str:
     """
-    Validate that part numbers mentioned in GPT response actually exist in the catalog.
-    If GPT invented a part number, flag it in the response.
+    Validate that part numbers mentioned in GPT response actually exist in
+    the catalog. Known PNs include: (a) the products attached to the current
+    search, (b) any product PNs from prior conversation turns (so legitimate
+    coreference like "the second one" doesn't get false-flagged), and (c)
+    text-mined PNs from history content. If GPT invents a PN that's in
+    NONE of those AND not in the catalog, flag it in the response.
     """
     import re as _re
 
     if not response or df.empty:
         return response
 
-    # Collect known part numbers from provided context
-    known_pns = set()
+    # Collect known part numbers from current context + full history
+    known_pns: set[str] = set()
     for p in provided_products:
         pn = p.get("Part_Number", "")
         if pn:
             known_pns.add(pn.upper().strip())
+        for alt_key in ("Alt_Code", "Supplier_Code"):
+            alt = p.get(alt_key, "")
+            if alt:
+                known_pns.add(str(alt).upper().strip())
+    # Union with PNs found in this user's prior conversation turns.
+    known_pns |= _collect_history_part_numbers(history)
 
     # Find part-number-like patterns in GPT response (alphanumeric with dashes/slashes)
     # Pattern: 2+ chars with mix of letters+digits, may have dashes/slashes

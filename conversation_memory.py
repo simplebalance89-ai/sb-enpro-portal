@@ -11,9 +11,10 @@ Background cleanup: deletes rows older than 7 days every hour.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Sequence
+from typing import Any, List, Optional, Sequence
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,22 +38,53 @@ def _truncate(content: str) -> str:
     return content[:MAX_CONTENT_CHARS] + "…[truncated]"
 
 
+def _turn_hash(user_id: int, role: str, content: str) -> str:
+    """
+    Idempotency key bucketed by minute. Lets us detect retries: if the same
+    user posts the same message twice within ~60s (network retry, duplicate
+    submit), the hash collides and we skip the second insert. Different
+    minutes get different hashes, so legitimate repeated questions still
+    persist.
+    """
+    bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+    raw = f"{user_id}|{role}|{content}|{bucket}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+async def _exists_recent(session: AsyncSession, turn_hash: str) -> bool:
+    result = await session.execute(
+        select(Conversation.id).where(Conversation.turn_hash == turn_hash).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def append_message(
     session: AsyncSession,
     user_id: int,
     role: str,
     content: str,
+    products: Optional[List[Any]] = None,
 ) -> None:
-    """Append a single message. Caller commits."""
+    """Append a single message. Caller commits.
+
+    Idempotent within the current minute via SHA-256 turn_hash dedupe.
+    """
     if role not in ("user", "assistant"):
         raise ValueError(f"invalid role: {role}")
     if not content:
+        return
+    truncated = _truncate(content)
+    th = _turn_hash(user_id, role, truncated)
+    if await _exists_recent(session, th):
+        logger.info(f"conversation_memory: dedup skip ({role}, user={user_id})")
         return
     session.add(
         Conversation(
             user_id=user_id,
             role=role,
-            content=_truncate(content),
+            content=truncated,
+            products_json=products if products else None,
+            turn_hash=th,
         )
     )
 
@@ -62,10 +94,17 @@ async def append_turn(
     user_id: int,
     user_message: str,
     assistant_message: str,
+    products: Optional[List[Any]] = None,
 ) -> None:
-    """Append a user+assistant pair and commit."""
+    """Append a user+assistant pair and commit.
+
+    `products`, if provided, is the structured products list returned by the
+    handler — attached to the assistant turn so future coreference upgrades
+    ("compare those two") can inject the real product records back into the
+    GPT prompt instead of relying on rendered markdown alone.
+    """
     await append_message(session, user_id, "user", user_message)
-    await append_message(session, user_id, "assistant", assistant_message)
+    await append_message(session, user_id, "assistant", assistant_message, products=products)
     await session.commit()
 
 
@@ -76,7 +115,9 @@ async def get_recent_history(
 ) -> List[dict]:
     """
     Return recent history as OpenAI chat messages, oldest first, capped at
-    `max_messages` and bounded to RETENTION_DAYS days.
+    `max_messages` and bounded to RETENTION_DAYS days. Each dict carries
+    `role`, `content`, and (when present) `products` so the router can
+    re-inject structured prior turn products on coreference.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
     stmt = (
@@ -88,7 +129,13 @@ async def get_recent_history(
     result = await session.execute(stmt)
     rows: Sequence[Conversation] = result.scalars().all()
     # Reverse to chronological order for the prompt.
-    return [{"role": r.role, "content": r.content} for r in reversed(rows)]
+    out: List[dict] = []
+    for r in reversed(rows):
+        msg: dict = {"role": r.role, "content": r.content}
+        if r.products_json:
+            msg["products"] = r.products_json
+        out.append(msg)
+    return out
 
 
 async def clear_user_history(session: AsyncSession, user_id: int) -> int:

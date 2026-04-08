@@ -34,17 +34,32 @@
     // ── Global 401 handler ──
     // Wrap window.fetch once. Any non-auth-probe response with status 401 means
     // the user's session expired or never existed — kick them to /login.html
-    // instead of surfacing a misleading "search failed" toast.
+    // instead of surfacing a misleading "search failed" toast. Whitelisted:
+    //   /api/auth/me    — the gate probe (would loop)
+    //   /api/auth/login — bad PIN responses must reach the login UI
+    // Single-flight guard via window.__fmRedirecting prevents a 401 storm
+    // from multiple in-flight requests calling location.replace() in parallel.
     (function installAuthRedirect() {
         if (window.__fmAuthRedirectInstalled) return;
         window.__fmAuthRedirectInstalled = true;
         var origFetch = window.fetch.bind(window);
+        var AUTH_WHITELIST = ['/api/auth/me', '/api/auth/login'];
         window.fetch = function (input, init) {
             return origFetch(input, init).then(function (resp) {
                 try {
-                    var url = (typeof input === 'string') ? input : (input && input.url) || '';
-                    // Don't loop on the auth probe itself
-                    if (resp.status === 401 && url.indexOf('/api/auth/me') === -1) {
+                    var url;
+                    if (typeof input === 'string') {
+                        url = input;
+                    } else if (input && input.url) {
+                        url = input.url;
+                    } else {
+                        url = String(input);
+                    }
+                    var whitelisted = AUTH_WHITELIST.some(function (p) {
+                        return url.indexOf(p) !== -1;
+                    });
+                    if (resp.status === 401 && !whitelisted && !window.__fmRedirecting) {
+                        window.__fmRedirecting = true;
                         window.location.replace('/login.html');
                     }
                 } catch (_) {}

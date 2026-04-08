@@ -23,7 +23,9 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -73,6 +75,13 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(16), nullable=False)  # "user" | "assistant"
     content = Column(Text, nullable=False)
+    # Structured products attached to this turn (assistant turns only).
+    # Lets the coreference upgrade in router.py inject [PRIOR TURN PRODUCTS]
+    # without having to re-parse rendered markdown out of `content`.
+    products_json = Column(JSONB, nullable=True)
+    # Idempotency hash: hash(user_id, role, content, minute_bucket). Lets us
+    # skip duplicate writes when a client retries within ~60s.
+    turn_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (
@@ -99,6 +108,21 @@ async def init_db() -> bool:
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Idempotent migration for deploys made before products_json/turn_hash
+        # existed. SQLAlchemy create_all only creates missing TABLES, not
+        # missing columns on existing tables. Postgres-specific.
+        await conn.execute(text(
+            "ALTER TABLE conversations "
+            "ADD COLUMN IF NOT EXISTS products_json JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE conversations "
+            "ADD COLUMN IF NOT EXISTS turn_hash VARCHAR(64)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_conversations_turn_hash "
+            "ON conversations (turn_hash)"
+        ))
 
     logger.info("Database initialized (users, conversations)")
     return True
