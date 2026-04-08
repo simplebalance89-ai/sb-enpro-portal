@@ -98,6 +98,39 @@ def reset_state(session_id: str) -> dict[str, Any]:
     return snapshot(session_id)
 
 
+def migrate_session(from_id: str, to_id: str) -> bool:
+    """
+    Re-key a quote_state session from one id to another. Used when the
+    frontend transitions from a pre-auth random UUID to a stable per-user
+    session id (`u<id>`) on first login — without this, the user's
+    in-progress quote cart silently disappears the moment they sign in.
+
+    Returns True if anything was migrated, False if there was nothing to
+    move (no source session, or source/dest are the same).
+    """
+    if not from_id or not to_id or from_id == to_id:
+        return False
+    if from_id not in _SESSIONS:
+        return False
+
+    src = _SESSIONS.pop(from_id)
+    src["session_id"] = to_id
+
+    # If the destination already has state (e.g. another tab on the same
+    # user already started something), prefer the more populated one.
+    existing = _SESSIONS.get(to_id)
+    if existing:
+        src_items = len(src.get("line_items") or [])
+        existing_items = len(existing.get("line_items") or [])
+        if existing_items >= src_items:
+            # Keep existing, drop the migrated one
+            return False
+
+    _SESSIONS[to_id] = src
+    logger.info(f"quote_state: migrated session {from_id[:8]}... → {to_id}")
+    return True
+
+
 def snapshot(session_id: str) -> dict[str, Any]:
     state = get_state(session_id)
     _refresh_readiness(state)

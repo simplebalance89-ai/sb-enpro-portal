@@ -283,10 +283,30 @@ Return JSON only — no markdown, no explanation. Fields:
 
 Omit fields not mentioned. Use null for uncertain values.
 
+PART NUMBER EXTRACTION — IMPORTANT
+Be aggressive about identifying part-number candidates. ANY of these patterns should be extracted as part_number:
+- All-uppercase tokens 4+ characters that look code-like (HC9020, CLR510, BE10S7S1)
+- Mixed alphanumerics with no spaces (HC-9021FAS4Z, MX12-30NN)
+- Words that are clearly NOT English words OR filtration terms but resemble part codes (HALLUCINATE1, GHOST-PART, XXXXXXXXX, NONEXIST001)
+- ALL-CAPS sequences of 6+ letters even without digits (XXXXXXXXX, ABCXYZ, NOTREAL)
+- Any token that looks like garbage text the user wants looked up
+
+The downstream catalog check will VERIFY whether the extracted part_number actually exists. If you're unsure whether something is a part number, EXTRACT IT — it's safer to over-extract and let the catalog check strip false positives than to silently search on residual specs and return wrong products.
+
+Do NOT extract these as part_numbers:
+- Common English words ("filter", "element", "compressed", "stainless")
+- Filtration domain terms ("micron", "PSI", "PTFE", "EPDM")
+- Manufacturer names (those go in manufacturer field)
+- Pure numbers under 4 digits (those are likely specs, not PNs)
+
 Examples:
 "10 micron pall filter in stock" → {"manufacturer":"Pall","micron":10,"in_stock":true}
 "polypropylene bag 25 micron" → {"media":"Polypropylene","product_type":"Bag Filter","micron":25}
 "CLR510" → {"part_number":"CLR510"}
+"look up FAKE12345 10 micron glass fiber" → {"part_number":"FAKE12345","micron":10,"media":"Glass Fiber"}
+"HALLUCINATE1 glass fiber element" → {"part_number":"HALLUCINATE1","media":"Glass Fiber","product_type":"Elements"}
+"GHOST-PART 150 PSI element" → {"part_number":"GHOST-PART","max_psi":150,"product_type":"Elements"}
+"XXXXXXXXX 5 micron filter" → {"part_number":"XXXXXXXXX","micron":5}
 "compressed air filter element" → {"application":"Compressed Air","product_type":"Elements"}
 "pharmaceutical water treatment filter" → {"application":"Water Treatment","industry":"Pharmaceutical"}
 "graver 5 micron cartridge rated to 200 degrees" → {"manufacturer":"Graver Technologies","micron":5,"product_type":"Cartridges","max_temp":200}

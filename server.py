@@ -28,6 +28,7 @@ from azure_client import health_check as azure_health_check, close_client
 from governance import run_pre_checks
 from quote_state import (
     merge_into_quote_request,
+    migrate_session as migrate_quote_session,
     reset_state as reset_quote_state,
     snapshot as snapshot_quote_state,
     update_from_chemical,
@@ -161,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.7.0",
+    version="2.8.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -242,6 +243,11 @@ class ReportRequest(BaseModel):
 
 class QuoteStateResetRequest(BaseModel):
     session_id: str
+
+
+class SessionMigrateRequest(BaseModel):
+    from_session_id: str = Field(max_length=200)
+    to_session_id: str = Field(max_length=200)
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +379,19 @@ async def chat(request: Request, req: ChatRequest):
         products=result.get("products"),
     )
     return result
+
+
+@app.post("/api/session/migrate")
+async def session_migrate(req: SessionMigrateRequest):
+    """
+    Re-key in-memory quote_state from a pre-auth random UUID to the
+    user's stable per-user session id (`u<id>`). Called by the frontend
+    on first PIN login so the in-progress quote cart doesn't disappear
+    when sessionId switches. Idempotent — does nothing if there's no
+    matching source state.
+    """
+    moved = migrate_quote_session(req.from_session_id, req.to_session_id)
+    return {"ok": True, "moved": moved}
 
 
 @app.post("/api/chat/reset")

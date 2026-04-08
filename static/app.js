@@ -73,9 +73,33 @@
     // layer stays consistent across tabs/refreshes for that user. Auth gate in
     // index.html sets window.__FM_USER before app.js loads. Falls back to a
     // random UUID for unauth/legacy mode (DB not configured).
+    //
+    // First-login migration (G10): if the user previously had quote state
+    // under a random pre-auth UUID in localStorage, fire-and-forget a POST
+    // to /api/session/migrate so the server-side quote cart re-keys onto
+    // the new u<id> session. Without this, an in-progress quote cart
+    // silently disappears the moment they sign in.
     let sessionId;
     if (window.__FM_USER && window.__FM_USER.id) {
         sessionId = 'u' + window.__FM_USER.id;
+        var legacySessionId = localStorage.getItem(SESSION_KEY);
+        if (legacySessionId && legacySessionId !== sessionId) {
+            // Defer slightly so the auth cookie + page state are settled
+            setTimeout(function () {
+                fetch(API_BASE + '/api/session/migrate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        from_session_id: legacySessionId,
+                        to_session_id: sessionId
+                    })
+                }).catch(function () { /* best effort — soft fail */ });
+            }, 200);
+        }
+        // Pin localStorage to the user-bound id so future page loads skip
+        // the migrate dance entirely.
+        try { localStorage.setItem(SESSION_KEY, sessionId); } catch (_) {}
     } else {
         sessionId = localStorage.getItem(SESSION_KEY);
         if (!sessionId) {
