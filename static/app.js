@@ -2761,6 +2761,45 @@
         });
     };
 
+    // ── Sign-out ──
+    // Calls /api/auth/logout to clear the server-side session cookie, then
+    // hard-redirects to /login.html. The global fetch wrapper will also kick
+    // any subsequent 401 back to login, so this is belt-and-suspenders.
+    window.signOut = function () {
+        fetch(API_BASE + '/api/auth/logout', {
+            method: 'POST',
+            credentials: 'same-origin',
+        }).catch(function () { /* best effort */ })
+          .then(function () {
+              try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+              window.location.replace('/login.html');
+          });
+    };
+
+    // ── User identity chip — populate from window.__FM_USER ──
+    // The auth gate in index.html sets window.__FM_USER on /api/auth/me 200.
+    // If present, show the chip with first name + initials. If not (legacy
+    // mode, DB-auth not configured, or unauthenticated path), keep it hidden.
+    (function populateUserChip() {
+        var user = window.__FM_USER;
+        if (!user || !user.name) return;
+        var chip = document.getElementById('userChip');
+        var nameEl = document.getElementById('userChipName');
+        var initialsEl = document.getElementById('userChipInitials');
+        if (!chip || !nameEl || !initialsEl) return;
+
+        var fullName = String(user.name).trim();
+        var firstName = fullName.split(/\s+/)[0] || fullName;
+        var initials = fullName.split(/\s+/).slice(0, 2)
+            .map(function (s) { return s.charAt(0).toUpperCase(); })
+            .join('') || '?';
+
+        nameEl.textContent = firstName;
+        initialsEl.textContent = initials;
+        chip.title = fullName + (user.email ? ' (' + user.email + ')' : '');
+        chip.style.display = 'inline-flex';
+    })();
+
     // ── Session History ──
     var SEARCH_HISTORY_KEY = 'enpro_fm_search_history';
     var MAX_HISTORY = 30;

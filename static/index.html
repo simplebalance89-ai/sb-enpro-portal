@@ -1995,43 +1995,26 @@
 <div class="header">
     <div class="header-logo">Ep</div>
     <div style="flex:1;">
-        <div class="header-title">Filtration Mastermind <span style="font-size:11px; font-weight:400; opacity:0.7; margin-left:6px;">V2.8</span></div>
+        <div class="header-title">Filtration Mastermind <span style="font-size:11px; font-weight:400; opacity:0.7; margin-left:6px;">V2.9</span></div>
         <div class="header-sub">Enpro Inc. Product Intelligence</div>
     </div>
     <button onclick="toggleDarkMode()" id="darkModeBtn" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3); color:white; padding:6px 10px; border-radius:6px; font-size:15px; cursor:pointer;" title="Toggle dark mode">&#9790;</button>
     <button onclick="sendMessage('help')" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3); color:white; padding:6px 10px; border-radius:6px; font-size:13px; cursor:pointer;" title="Help">?</button>
     <button onclick="newChat()" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3); color:white; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; white-space:nowrap;">New Chat</button>
     <button onclick="resetMemory()" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3); color:white; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; white-space:nowrap;" title="Wipe your 7-day conversation memory and start fresh">Start Fresh</button>
+    <!-- User identity chip + sign-out — populated by app.js after auth gate -->
+    <div id="userChip" style="display:none; align-items:center; gap:8px; margin-left:8px; padding:5px 10px; background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.3); border-radius:18px; font-size:13px; color:white; cursor:default; max-width:200px;">
+        <div id="userChipInitials" style="width:22px; height:22px; border-radius:50%; background:#fff; color:#003366; font-weight:700; font-size:11px; display:flex; align-items:center; justify-content:center;">?</div>
+        <span id="userChipName" style="font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">…</span>
+        <button onclick="signOut()" title="Sign out" style="background:transparent; border:none; color:white; cursor:pointer; padding:0 0 0 4px; font-size:14px; line-height:1;">⏻</button>
+    </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="quick-actions">
-    <div class="qa-row" style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; width:100%;">
-        <button class="qa-btn" onclick="showModal('lookup')">
-            <span class="qa-icon">&#128269;</span> Lookup Part Number
-        </button>
-        <!-- Industry button hidden for now -->
-        <button class="qa-btn" onclick="showModal('industry')" style="display:none;">
-            <span class="qa-icon">&#127981;</span> Industry
-        </button>
-        <!-- Manufacturer button hidden -->
-        <button class="qa-btn" onclick="showModal('manufacturer')" style="display:none;">
-            <span class="qa-icon">&#127981;</span> Manufacturer
-        </button>
-        <!-- Lookup by Spec button hidden for now -->
-        <button class="qa-btn" onclick="showModal('specs')" style="display:none;">
-            <span class="qa-icon">&#128295;</span> Lookup by Spec
-        </button>
-        <button class="qa-btn" onclick="showModal('pregame')">
-            <span class="qa-icon">&#128100;</span> Customer Pre Game
-        </button>
-        <button class="qa-btn" onclick="showModal('compare')">
-            <span class="qa-icon">&#128203;</span> Compare Parts
-        </button>
-        <button class="qa-btn" onclick="showModal('help')">
-            <span class="qa-icon">&#10068;</span> Help
-        </button>
-    </div>
+<!-- Quick Actions removed in V2.9 — conversational pivot per Andrew's product
+     review doc. Lookup, pregame, compare, help all happen via natural language
+     in the chat input. Modal handlers in app.js are kept as dead code for now
+     in case any test or external link still references showModal(). -->
+<div class="quick-actions" style="display:none;">
     <button class="qa-exit-flow" id="exitFlowBtn" onclick="exitFlow()">&#10005; Back</button>
 </div>
 
@@ -2070,10 +2053,11 @@
 <!-- Chat Area -->
 <div class="chat-area" id="chatArea">
     <div class="welcome">
-        <div class="welcome-icon" style="font-size:48px;">&#128270;</div>
-        <h2>Filtration Mastermind</h2>
-        <p style="font-size:16px; line-height:1.6;">Just ask. Look up a part, check supplier or alt code, run customer pre game, or compare products — type it like you'd say it.</p>
-        <p style="margin-top:8px; font-size:13px; color:var(--text-light);">19,470 validated products. Real-time inventory. Real prices.</p>
+        <div class="welcome-icon" style="font-size:48px;">&#128172;</div>
+        <h2>Just talk to me.</h2>
+        <p style="font-size:16px; line-height:1.6; max-width:520px; margin:0 auto;">Pull up a part. Prep for a customer meeting. Compare two filters. Check chemical compatibility. Type or talk — like you'd say it to a colleague.</p>
+        <p style="margin-top:14px; font-size:13px; color:var(--text-light);">19,470 validated products. Real-time inventory. Real prices.</p>
+        <p style="margin-top:18px; font-size:12px; color:var(--text-light); opacity:0.7;">Examples: <em>"I'm meeting a data center HVAC operator tomorrow"</em> · <em>"compare HC9020 and HC9021"</em> · <em>"will PTFE handle 98% sulfuric acid"</em></p>
     </div>
 </div>
 
