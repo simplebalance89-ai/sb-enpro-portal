@@ -234,6 +234,16 @@ Rules:
 
 1. Accuracy first. Reps will repeat what you say to customers. Every part number, price, spec, manufacturer, and stock figure MUST come from the [RELEVANT PRODUCTS FROM CATALOG] data attached to the user's message — and NEVER from prior chat turns unless they appear there too. If a spec is missing, say "Not in catalog — I'd check with the office on that one." Never guess. Never invent. Never round.
 
+## CUSTOMER CONTEXT (when present)
+
+If the user message comes with a [CUSTOMER CONTEXT] block, that's THIS rep's actual relationship history with the customer they just mentioned — recent orders, active quotes, contact info, credit status, location. Treat it as ground truth about the relationship.
+
+LEAD with what you know about that customer in the headline. Reference specific recent orders by date and dollar value when relevant ("Last order March 18 for $34K, ten cases of Filtrox depth sheets"). Mention any open quote in the body if it's relevant to the new question ("There's an active quote NTIE-027365 for Protectoseal vents at $18,562 — that's still open with Michael Bolig").
+
+Don't recite the JSON. Speak it like a colleague briefing the rep before they walk into the meeting. The rep already owns this customer; you're surfacing what they may have forgotten.
+
+Keep the customer context separate from the catalog answer. The customer context is the relationship; the catalog answer is the new product question. Tie them together when relevant ("They've been buying Pall HC9020 for two years; if they want longer service life, here's the upgrade path...").
+
 2. Recommend, don't dump. Narrow the catalog data to 2 or 3 best fits and explain why each is a fit in plain language. Never say "400 results" or "I found 47 options" — that's a search engine, not a colleague. If the data really is too broad, ask ONE clarifying question to narrow it.
 
 3. Ask one good question when you need to. If the user's input is ambiguous ("we run a brewery"), ask the single most useful follow-up: "What's your flow rate?" or "Are they currently running depth sheets or cartridges?" — never two questions in one turn, never a checklist.
@@ -657,6 +667,7 @@ async def handle_message(
     df: pd.DataFrame,
     chemicals_df: pd.DataFrame,
     history: Optional[list] = None,
+    user_rep_id: Optional[str] = None,
 ) -> dict:
     """
     Main message handler. Routes through governance pre-checks, intent classification,
@@ -679,7 +690,7 @@ async def handle_message(
     if mode == "ask_john":
         logger.info(f"ASK JOHN mode | Message: {message[:80]}")
         advisory = pre_check.get("advisory") if pre_check else None
-        return await _handle_gpt(message, "application", df, chemicals_df, history, advisory)
+        return await _handle_gpt(message, "application", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
     # --- Intent classification ---
     intent = await classify_intent(message)
@@ -697,7 +708,7 @@ async def handle_message(
     # the QUOTE_READY canned response).
     if history and _has_coreference(message) and intent in (PANDAS_INTENTS | SCRIPTED_INTENTS):
         logger.info(f"Coreference detected in '{message[:60]}' — upgrading {intent} → general (GPT with history)")
-        return await _handle_gpt(message, "general", df, chemicals_df, history, advisory)
+        return await _handle_gpt(message, "general", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
     # --- Route to handler ---
     if intent in SCRIPTED_INTENTS:
@@ -714,7 +725,7 @@ async def handle_message(
         return await _handle_pandas(message, intent, df)
 
     if intent in GPT_INTENTS:
-        return await _handle_gpt(message, intent, df, chemicals_df, history, advisory)
+        return await _handle_gpt(message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
     # Fallback
     return {
@@ -1119,6 +1130,7 @@ async def _handle_gpt(
     chemicals_df: pd.DataFrame,
     history: Optional[list],
     advisory: Optional[str],
+    user_rep_id: Optional[str] = None,
 ) -> dict:
     """Handle intents that require GPT-4.1 reasoning."""
 
@@ -1193,6 +1205,38 @@ async def _handle_gpt(
             "'those filters', 'compare them', 'the second one'). For any new question, "
             "PREFER the [RELEVANT PRODUCTS FROM CATALOG] block below."
         )
+
+    # Customer Intelligence layer (V2.12) — when the logged-in rep has a
+    # rep_id mapped AND the user message mentions one of their owned customers,
+    # fetch the customer's profile + recent orders + active quotes from
+    # Postgres and inject as a [CUSTOMER CONTEXT] block. This is the
+    # "knowledgeable colleague who knows your book" feature. Soft-fall on
+    # any error — the catalog answer still ships.
+    if user_rep_id:
+        try:
+            from customer_intel import (
+                get_rep_customer_index,
+                extract_customer_mention,
+                fetch_customer_intel,
+            )
+            customer_index = await get_rep_customer_index(user_rep_id)
+            mentioned = extract_customer_mention(message, customer_index)
+            if mentioned:
+                intel = await fetch_customer_intel(user_rep_id, mentioned["customer_id"])
+                if intel:
+                    intel_json = json.dumps(intel, indent=2, default=str)
+                    context_parts.append(
+                        f"[CUSTOMER CONTEXT — your relationship with {mentioned['customer_name']}]:\n"
+                        f"{intel_json}\n"
+                        "This is THIS rep's actual relationship history with this customer — "
+                        "their recent orders, active quotes, contact info, credit status. "
+                        "LEAD with what you know about them before answering the new question. "
+                        "Reference specific recent orders or open quotes by date and value when "
+                        "relevant. Don't recite the JSON — speak it like a colleague briefing them."
+                    )
+                    logger.info(f"customer_intel: injected context for {mentioned['customer_name']} (rep {user_rep_id})")
+        except Exception as ci_err:
+            logger.error(f"customer_intel fetch failed (non-fatal): {ci_err}")
 
     search_result = {"results": []}
     if search_query:

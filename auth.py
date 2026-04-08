@@ -30,10 +30,16 @@ SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 days
 GLOBAL_PIN = os.environ.get("GLOBAL_PIN", "0000")
 # Pilot user list — auto-seeded on startup if missing.
 PILOT_USERS = [
-    {"email": "peter.wilson@conveyance365.com", "name": "Peter Wilson"},
-    {"email": "andrew@conveyance365.com", "name": "Andrew Taylor"},
-    {"email": "grant_cook@enproinc.com", "name": "Grant Cook"},
-    {"email": "john_burnett@enproinc.com", "name": "John Burnett"},
+    # Existing 4 pilot users — no rep_id, generic V2.11 catalog experience
+    {"email": "peter.wilson@conveyance365.com", "name": "Peter Wilson", "rep_id": None},
+    {"email": "andrew@conveyance365.com", "name": "Andrew Taylor", "rep_id": None},
+    {"email": "grant_cook@enproinc.com", "name": "Grant Cook", "rep_id": None},
+    {"email": "john_burnett@enproinc.com", "name": "John Burnett", "rep_id": None},
+    # V2.12 test profiles — pre-mapped to real rep_ids from the customer
+    # intel data so Peter can validate the per-rep customer context layer
+    # without touching the production pilot accounts.
+    {"email": "test.morec@enpro.local", "name": "Test Rep — MOREC00", "rep_id": "MOREC00"},
+    {"email": "test.ambrb@enpro.local", "name": "Test Rep — AMBRB00", "rep_id": "AMBRB00"},
 ]
 
 _SECRET = os.environ.get("SESSION_SECRET", "")
@@ -187,7 +193,10 @@ async def login(
 
 
 async def seed_pilot_users(session: AsyncSession) -> int:
-    """Insert any pilot users that don't already exist. Returns count inserted."""
+    """Insert any pilot users that don't already exist. Returns count inserted.
+
+    rep_id is set on first insert only — manual SQL changes to existing users
+    are preserved across deploys (no clobber)."""
     inserted = 0
     pin_hash = hash_password(GLOBAL_PIN)
     for u in PILOT_USERS:
@@ -199,6 +208,7 @@ async def seed_pilot_users(session: AsyncSession) -> int:
                 email=u["email"],
                 name=u["name"],
                 password_hash=pin_hash,
+                rep_id=u.get("rep_id"),
             ))
             inserted += 1
     if inserted:

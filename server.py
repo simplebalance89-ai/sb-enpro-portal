@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.11.0",
+    version="2.12.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -275,29 +275,29 @@ async def health():
 # Auth + memory helpers — shared by /api/chat, /api/chemical, /api/voice-search-text
 # ---------------------------------------------------------------------------
 
-async def _chat_auth_and_history(request: Request) -> tuple[Optional[int], list]:
+async def _chat_auth_and_history(request: Request) -> tuple[Optional[int], Optional[str], list]:
     """
     Phase 1 of any history-aware endpoint: short DB session, look up the
-    optional logged-in user + their recent history.
+    optional logged-in user + their recent history. Returns
+    (user_id, rep_id, history). The rep_id is the per-user customer
+    intelligence partition key — None for generic salesperson mode.
 
-    SOFT by design: returns (None, []) if DB is unconfigured, no cookie is
-    present, or the cookie is invalid. Endpoints that require auth (like
-    /api/chat) must enforce it themselves after calling this helper.
-    Endpoints that should keep working for anonymous callers (voice search,
-    chemical compatibility) just use whatever this returns.
+    SOFT by design: returns (None, None, []) if DB is unconfigured, no
+    cookie is present, or the cookie is invalid. Endpoints that require
+    auth (like /api/chat) must enforce it themselves after calling.
     """
     if not db_ready():
-        return None, []
+        return None, None, []
     try:
         async with session_factory()() as session:
             user = await auth.get_current_user_optional(request, session)
             if user is None:
-                return None, []
+                return None, None, []
             history = await conversation_memory.get_recent_history(session, user.id)
-            return user.id, history
+            return user.id, user.rep_id, history
     except (OperationalError, DBAPIError, ConnectionError) as e:
         logger.error(f"DB connection error during auth/history fetch: {e}", exc_info=True)
-        return None, []
+        return None, None, []
 
 
 async def _persist_turn(
@@ -343,7 +343,7 @@ async def chat(request: Request, req: ChatRequest):
             content={"error": "Data not loaded yet. Try again in a moment."},
         )
 
-    user_id, history = await _chat_auth_and_history(request)
+    user_id, user_rep_id, history = await _chat_auth_and_history(request)
 
     # /api/chat REQUIRES auth when DB is configured. Voice + chemical
     # endpoints stay open for anonymous callers (the soft helper above
@@ -360,6 +360,7 @@ async def chat(request: Request, req: ChatRequest):
             df=state.df,
             chemicals_df=state.chemicals_df,
             history=history or None,
+            user_rep_id=user_rep_id,
         )
         result["quote_state"] = snapshot_quote_state(req.session_id)
     except Exception as e:
@@ -416,7 +417,7 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
         return
 
     # Auth + history fetch (same soft helper as /api/chat)
-    user_id, history = await _chat_auth_and_history(request)
+    user_id, user_rep_id, history = await _chat_auth_and_history(request)
     if db_ready() and user_id is None:
         yield _sse_event("error", {"error": "Not authenticated", "status": 401})
         return
@@ -433,6 +434,7 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
             df=state.df,
             chemicals_df=state.chemicals_df,
             history=history or None,
+            user_rep_id=user_rep_id,
         )
         result["quote_state"] = snapshot_quote_state(req.session_id)
     except Exception as e:
@@ -568,7 +570,7 @@ async def lookup(request: Request, req: LookupRequest):
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
-    user_id, _history = await _chat_auth_and_history(request)
+    user_id, _rep_id, _history = await _chat_auth_and_history(request)
     product = lookup_part(state.df, req.part_number)
 
     if product:
@@ -608,7 +610,7 @@ async def search(request: Request, req: SearchRequest):
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
-    user_id, _history = await _chat_auth_and_history(request)
+    user_id, _rep_id, _history = await _chat_auth_and_history(request)
     result = search_products(state.df, req.query, field=req.field)
     update_from_message(req.session_id, req.query, state.df, intent="search")
     result["quote_state"] = update_from_search(req.session_id, req.query, result.get("results", []))
@@ -635,7 +637,7 @@ async def chemical_check(request: Request, req: ChemicalRequest):
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
-    user_id, history = await _chat_auth_and_history(request)
+    user_id, user_rep_id, history = await _chat_auth_and_history(request)
     chem_message = f"Chemical compatibility: {req.chemical}"
 
     try:
@@ -647,6 +649,7 @@ async def chemical_check(request: Request, req: ChemicalRequest):
             df=state.df,
             chemicals_df=state.chemicals_df,
             history=history or None,
+            user_rep_id=user_rep_id,
         )
         result["quote_state"] = update_from_chemical(req.session_id, req.chemical)
         await _persist_turn(
@@ -1144,7 +1147,7 @@ async def voice_search_text(request: Request, req: ChatRequest):
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
-    user_id, _history = await _chat_auth_and_history(request)
+    user_id, _rep_id, _history = await _chat_auth_and_history(request)
 
     try:
         result = await voice_search_pipeline(req.message, state.df)

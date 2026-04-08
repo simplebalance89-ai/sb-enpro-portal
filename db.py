@@ -16,10 +16,14 @@ from typing import AsyncIterator, Optional
 from sqlalchemy import (
     BigInteger,
     Column,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
+    PrimaryKeyConstraint,
     String,
     Text,
     func,
@@ -66,6 +70,118 @@ class User(Base):
     name = Column(String(255), nullable=False, default="")
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Customer Intelligence layer (additive, optional). When set, the FM
+    # will surface this user's owned customers, their order history, top
+    # parts, and active quotes when relevant. NULL = generic salesperson
+    # mode (V2.11 catalog-only experience). The value is a P21 salesrep
+    # rep_id from PO Portal Salespeople.csv (e.g. "1042" or "MOREC00").
+    rep_id = Column(String(20), nullable=True, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Customer Intelligence tables (per-rep partitioned)
+# ---------------------------------------------------------------------------
+# Every table below has a composite primary key starting with `rep_id`,
+# so any per-rep query is an index scan and there is NO bypass path —
+# the WHERE rep_id = ? clause is structural, not policy.
+# Same customer can appear under multiple rep_ids if multiple reps have
+# ever taken an order for them; that's correct.
+
+
+class CustomerMaster(Base):
+    __tablename__ = "customer_master"
+
+    rep_id = Column(String(20), nullable=False)
+    customer_id = Column(Integer, nullable=False)
+
+    customer_name = Column(String(255), nullable=False, default="")
+    legal_name = Column(String(255), nullable=True)
+    credit_status = Column(String(20), nullable=True)
+    credit_limit = Column(Numeric(14, 2), nullable=True)
+    terms = Column(String(50), nullable=True)
+    salesrep_owner = Column(String(20), nullable=True)  # the official P21 owner if different from rep_id
+    mail_city = Column(String(80), nullable=True)
+    mail_state = Column(String(40), nullable=True)
+    central_phone = Column(String(50), nullable=True)
+    email_address = Column(String(255), nullable=True)
+    national_account = Column(String(2), nullable=True)
+    total_so_count = Column(Integer, nullable=True, default=0)
+    last_order_date = Column(Date, nullable=True)
+    sfdc_account_id = Column(String(50), nullable=True)
+    refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("rep_id", "customer_id", name="pk_customer_master"),
+        Index("ix_customer_master_name", "rep_id", "customer_name"),
+    )
+
+
+class CustomerTopPart(Base):
+    __tablename__ = "customer_top_parts"
+
+    rep_id = Column(String(20), nullable=False)
+    customer_id = Column(Integer, nullable=False)
+    inv_mast_uid = Column(BigInteger, nullable=False)
+
+    customer_part_number = Column(String(80), nullable=True)
+    part_description = Column(Text, nullable=True)
+    total_qty = Column(Numeric(14, 2), nullable=True)
+    total_extended_price = Column(Numeric(14, 2), nullable=True)
+    order_count = Column(Integer, nullable=True)
+    last_ordered_date = Column(Date, nullable=True)
+    refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("rep_id", "customer_id", "inv_mast_uid", name="pk_customer_top_parts"),
+        Index("ix_customer_top_parts_lookup", "rep_id", "customer_id"),
+    )
+
+
+class CustomerOrder(Base):
+    __tablename__ = "customer_orders"
+
+    rep_id = Column(String(20), nullable=False)
+    customer_id = Column(Integer, nullable=False)
+    order_no = Column(String(40), nullable=False)
+
+    order_date = Column(Date, nullable=True)
+    po_no = Column(String(80), nullable=True)
+    extended_price = Column(Numeric(14, 2), nullable=True)
+    ship2_city = Column(String(80), nullable=True)
+    ship2_state = Column(String(40), nullable=True)
+    line_count = Column(Integer, nullable=True)
+    completed = Column(String(2), nullable=True)
+    refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("rep_id", "customer_id", "order_no", name="pk_customer_orders"),
+        Index("ix_customer_orders_recent", "rep_id", "customer_id", "order_date"),
+    )
+
+
+class CustomerQuote(Base):
+    __tablename__ = "customer_quotes"
+
+    rep_id = Column(String(20), nullable=False)
+    customer_id = Column(Integer, nullable=True)  # nullable — fuzzy match may fail
+    quote_number = Column(String(40), nullable=False)
+
+    quote_name = Column(Text, nullable=True)
+    status = Column(String(40), nullable=True)
+    customer_name_raw = Column(String(255), nullable=True)  # original free-text for diagnostics
+    contact_name = Column(String(255), nullable=True)
+    extended_price = Column(Numeric(14, 2), nullable=True)
+    freight_terms = Column(String(80), nullable=True)
+    payment_terms = Column(String(80), nullable=True)
+    est_completion = Column(String(40), nullable=True)
+    created_date = Column(Date, nullable=True)
+    refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("rep_id", "quote_number", name="pk_customer_quotes"),
+        Index("ix_customer_quotes_lookup", "rep_id", "customer_id"),
+        Index("ix_customer_quotes_status", "rep_id", "status"),
+    )
 
 
 class Conversation(Base):
@@ -129,8 +245,18 @@ async def init_db() -> bool:
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_conversations_turn_hash "
             "ON conversations (turn_hash)"
         ))
+        # Customer Intelligence migration — adds users.rep_id if missing
+        # so deploys made before this column existed pick it up.
+        await conn.execute(text(
+            "ALTER TABLE users "
+            "ADD COLUMN IF NOT EXISTS rep_id VARCHAR(20)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_rep_id "
+            "ON users (rep_id)"
+        ))
 
-    logger.info("Database initialized (users, conversations)")
+    logger.info("Database initialized (users, conversations, customer_intel)")
     return True
 
 
