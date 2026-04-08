@@ -126,18 +126,38 @@ def _collect_history_part_numbers(
     return found
 
 
+_PRIOR_PRODUCTS_MAX_AGE_SECONDS = 3600  # 1 hour
+
+
 def _most_recent_history_products(history: Optional[list]) -> Optional[list]:
     """Walk history newest-to-oldest, return the first non-empty `products`
-    list. This is the structured snapshot we re-inject when a coreference
-    upgrade fires ("compare those two")."""
+    list newer than _PRIOR_PRODUCTS_MAX_AGE_SECONDS. Older snapshots are
+    ignored — a 6-day-old "compare those" should not pull in products from
+    an unrelated session, only an in-session follow-up should."""
     if not history:
         return None
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
     for msg in reversed(history):
         if not isinstance(msg, dict):
             continue
         prods = msg.get("products")
-        if isinstance(prods, list) and prods:
-            return prods
+        if not (isinstance(prods, list) and prods):
+            continue
+        ts = msg.get("created_at")
+        if ts:
+            try:
+                # ISO 8601 with timezone — Python 3.11+ handles +00:00 directly
+                msg_time = datetime.fromisoformat(str(ts))
+                if msg_time.tzinfo is None:
+                    msg_time = msg_time.replace(tzinfo=timezone.utc)
+                age = (now - msg_time).total_seconds()
+                if age > _PRIOR_PRODUCTS_MAX_AGE_SECONDS:
+                    continue
+            except (ValueError, TypeError):
+                # Bad timestamp — fall through and use it (better than dropping)
+                pass
+        return prods
     return None
 
 # ---------------------------------------------------------------------------
@@ -1046,27 +1066,26 @@ async def _handle_gpt(
                 search_query = None  # Skip the default search below
                 break
 
+    # Coreference support — inject the most recent non-empty prior-turn
+    # products FIRST, so the [RELEVANT PRODUCTS FROM CATALOG] block lands
+    # later in context (LLMs anchor on recency). Catalog wins on fresh
+    # questions, prior products are available for "compare those two".
+    prior_products = _most_recent_history_products(history)
+    if prior_products:
+        prior_json = json.dumps(prior_products[:5], indent=2, default=str)
+        context_parts.append(
+            f"[PRIOR TURN PRODUCTS — reference only, from this user's most recent search within the last hour]:\n{prior_json}\n"
+            "Use this ONLY if the user explicitly references prior turns ('that part', "
+            "'those filters', 'compare them', 'the second one'). For any new question, "
+            "PREFER the [RELEVANT PRODUCTS FROM CATALOG] block below."
+        )
+
     search_result = {"results": []}
     if search_query:
         search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
-
-    # Coreference support — inject the most recent non-empty prior-turn
-    # products as a separate, clearly-labeled block. Lets the model actually
-    # answer "compare those two" / "what was the second one's price" using
-    # real structured data instead of having to reconstruct from rendered
-    # markdown buried in chat history.
-    prior_products = _most_recent_history_products(history)
-    if prior_products:
-        prior_json = json.dumps(prior_products[:5], indent=2, default=str)
-        context_parts.append(
-            f"[PRIOR TURN PRODUCTS — from this user's most recent search]:\n{prior_json}\n"
-            "If the user is referencing prior turns ('that part', 'those filters', "
-            "'compare them', 'the second one'), use THIS list. Otherwise prefer "
-            "[RELEVANT PRODUCTS FROM CATALOG] above."
-        )
 
     # Anti-hallucination guardrail — force GPT to only use provided data
     context_parts.append(

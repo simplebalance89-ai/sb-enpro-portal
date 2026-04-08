@@ -2637,6 +2637,30 @@
         origNewChat2();
     };
 
+    // ── Wipe 7-day conversation memory + start fresh ──
+    // Header "Start Fresh" button. Calls /api/chat/reset (which only works
+    // when DB-auth is configured), then runs newChat() to clear local UI
+    // state. Soft-fails: if /reset returns 503 (auth not configured), we
+    // still wipe local state so the button always feels responsive.
+    window.resetMemory = function () {
+        if (!confirm('Wipe your 7-day conversation memory and start fresh?')) return;
+        fetch(API_BASE + '/api/chat/reset', {
+            method: 'POST',
+            credentials: 'same-origin',
+        }).then(function (resp) {
+            return resp.ok ? resp.json() : { ok: false };
+        }).catch(function () {
+            return { ok: false };
+        }).then(function (data) {
+            window.newChat();
+            if (data && data.deleted) {
+                appendMessage('bot', 'Cleared ' + data.deleted + ' messages from your 7-day memory. Starting fresh.');
+            } else {
+                appendMessage('bot', 'Started a new conversation.');
+            }
+        });
+    };
+
     // ── Session History ──
     var SEARCH_HISTORY_KEY = 'enpro_fm_search_history';
     var MAX_HISTORY = 30;
@@ -3440,7 +3464,18 @@
         return false; // Not a command, process normally
     }
 
+    // Single-flight guard for voice transcription requests. Without this,
+    // rapid mic clicks queue parallel /api/voice-search posts and rack up
+    // Whisper 429s. window.__fmVoiceBusy is set true the moment a recording
+    // is being uploaded, cleared when the response (or error) comes back.
+    window.__fmVoiceBusy = false;
+
     window.toggleVoice = function () {
+        if (window.__fmVoiceBusy) {
+            // Already processing a previous capture — ignore the click instead
+            // of stacking another in-flight request.
+            return;
+        }
         if (isListening) {
             stopListening();
         } else {
@@ -3468,7 +3503,18 @@
                 var blob = new Blob(voiceAudioChunks, { type: voiceMediaRecorder.mimeType });
                 voiceAudioChunks = [];
 
-                // Show processing state
+                // Empty / silent capture guard: a typical webm audio frame is
+                // ~3KB+ even for a fraction of a second. Anything smaller is
+                // either nothing recorded or a near-silent click. Drop it
+                // before burning a Whisper call.
+                if (blob.size < 2048) {
+                    userInput.placeholder = 'Ask about a part, chemical, or product...';
+                    appendMessage('bot', "I didn't catch any audio — try holding the mic and speaking clearly.");
+                    return;
+                }
+
+                // Show processing state and acquire the single-flight token
+                window.__fmVoiceBusy = true;
                 lastInteractionWasVoice = true;
                 userInput.placeholder = 'Processing voice...';
                 appendMessage('user', '🎤 Voice search...');
@@ -3479,7 +3525,17 @@
                     var resp = await fetch(API_BASE + '/api/voice-search', { method: 'POST', body: formData });
 
                     if (!resp.ok) {
-                        appendMessage('bot', 'Voice search failed. Try again or type your query.');
+                        // Branch on status code so we can give a useful message
+                        // instead of "Voice search failed" for everything.
+                        if (resp.status === 429) {
+                            appendMessage('bot', 'Whisper is busy right now — give it a sec and try again.');
+                        } else if (resp.status === 400) {
+                            appendMessage('bot', "I couldn't make out the audio — try again, a little louder.");
+                        } else if (resp.status >= 500) {
+                            appendMessage('bot', 'Voice service is having a moment. Try again in a few seconds, or type it instead.');
+                        } else {
+                            appendMessage('bot', 'Voice search failed. Try again or type your query.');
+                        }
                         userInput.placeholder = 'Ask about a part, chemical, or product...';
                         return;
                     }
@@ -3535,6 +3591,10 @@
                 } catch (err) {
                     console.error('Voice search error:', err);
                     appendMessage('bot', 'Voice search failed. Try typing instead.');
+                } finally {
+                    // Always release the single-flight lock so the next mic
+                    // tap works even if the previous one threw.
+                    window.__fmVoiceBusy = false;
                 }
 
                 userInput.placeholder = 'Ask about a part, chemical, or product...';

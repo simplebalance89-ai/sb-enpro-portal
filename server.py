@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.5.0",
+    version="2.6.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -992,7 +992,9 @@ async def voice_search_text(request: Request, req: ChatRequest):
         )
 
     # Render a compact assistant summary so the memory layer captures something
-    # meaningful (not just the empty pipeline metadata).
+    # meaningful (not just the empty pipeline metadata). The summary includes
+    # an ISO timestamp suffix so a legitimate retry of the same query within
+    # the dedup window doesn't silently collide on identical content.
     products = result.get("results") or []
     total = result.get("total_found", len(products))
     if products:
@@ -1001,6 +1003,7 @@ async def voice_search_text(request: Request, req: ChatRequest):
         summary = f"Voice search returned {total} results. Top: {first_pn}."
     else:
         summary = "Voice search returned no matches."
+    summary += f" [ts:{datetime.utcnow().isoformat(timespec='seconds')}]"
 
     await _persist_turn(user_id, req.message, summary, products=products)
     return result

@@ -39,22 +39,38 @@ def _truncate(content: str) -> str:
     return content[:MAX_CONTENT_CHARS] + "…[truncated]"
 
 
-def _turn_hash(user_id: int, role: str, content: str) -> str:
-    """
-    Idempotency key bucketed by minute. Lets us detect retries: if the same
-    user posts the same message twice within ~60s (network retry, duplicate
-    submit), the hash collides and we skip the second insert. Different
-    minutes get different hashes, so legitimate repeated questions still
-    persist.
-    """
-    bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+def _turn_hash_for_bucket(user_id: int, role: str, content: str, bucket: int) -> str:
     raw = f"{user_id}|{role}|{content}|{bucket}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
-async def _exists_recent(session: AsyncSession, turn_hash: str) -> bool:
+def _turn_hash(user_id: int, role: str, content: str) -> str:
+    """
+    Idempotency key bucketed by minute. Lets us detect retries: if the same
+    user posts the same message twice within ~60s (network retry, duplicate
+    submit), the hash collides and we skip the second insert.
+    """
+    bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+    return _turn_hash_for_bucket(user_id, role, content, bucket)
+
+
+def _turn_hashes_window(user_id: int, role: str, content: str) -> list[str]:
+    """Return hashes for the current AND previous minute-buckets so a retry
+    that crosses the 19:59:58 → 20:00:01 boundary still dedups."""
+    now_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+    return [
+        _turn_hash_for_bucket(user_id, role, content, now_bucket),
+        _turn_hash_for_bucket(user_id, role, content, now_bucket - 1),
+    ]
+
+
+async def _exists_recent(session: AsyncSession, turn_hashes: list[str]) -> bool:
+    """Check if ANY of the supplied turn_hashes already exists. Used to dedup
+    across the minute-bucket boundary."""
+    if not turn_hashes:
+        return False
     result = await session.execute(
-        select(Conversation.id).where(Conversation.turn_hash == turn_hash).limit(1)
+        select(Conversation.id).where(Conversation.turn_hash.in_(turn_hashes)).limit(1)
     )
     return result.scalar_one_or_none() is not None
 
@@ -75,8 +91,10 @@ async def append_message(
     if not content:
         return
     truncated = _truncate(content)
-    th = _turn_hash(user_id, role, truncated)
-    if await _exists_recent(session, th):
+    # Sliding window: hash for current AND previous minute buckets, so a
+    # retry that crosses the boundary still collides on at least one.
+    hash_window = _turn_hashes_window(user_id, role, truncated)
+    if await _exists_recent(session, hash_window):
         logger.info(f"conversation_memory: dedup skip ({role}, user={user_id})")
         return
     session.add(
@@ -85,7 +103,7 @@ async def append_message(
             role=role,
             content=truncated,
             products_json=products if products else None,
-            turn_hash=th,
+            turn_hash=hash_window[0],  # store the current-bucket hash
         )
     )
 
@@ -138,10 +156,17 @@ async def get_recent_history(
     )
     result = await session.execute(stmt)
     rows: Sequence[Conversation] = result.scalars().all()
-    # Reverse to chronological order for the prompt.
+    # Reverse to chronological order for the prompt. Each dict carries the
+    # ISO-8601 created_at so the router can apply a recency filter when
+    # injecting prior turn products (e.g. don't reuse a 6-day-old product
+    # snapshot for "compare those two").
     out: List[dict] = []
     for r in reversed(rows):
-        msg: dict = {"role": r.role, "content": r.content}
+        msg: dict = {
+            "role": r.role,
+            "content": r.content,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
         if r.products_json:
             msg["products"] = r.products_json
         out.append(msg)
