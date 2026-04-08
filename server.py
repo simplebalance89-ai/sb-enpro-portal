@@ -160,7 +160,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.1.0",
+    version="2.2.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -270,11 +270,10 @@ async def chat(request: Request, req: ChatRequest):
     """
     Main chat endpoint. Classifies intent, runs governance, routes to handler.
 
-    When auth is configured, the call is gated to a logged-in user and recent
-    conversation history (last 7 days, capped at MAX_HISTORY_MESSAGES) is fetched
-    from Postgres and injected into the GPT prompt — and the new turn is
-    persisted on the way out. When auth is not configured, behavior falls back
-    to the legacy stateless mode so a misconfigured deploy never bricks chat.
+    DB strategy (Phase 0 fix): three short-lived sessions, never holding a
+    connection across the GPT call. Phase 1 = auth + history fetch. Phase 2 =
+    handler / GPT (no DB). Phase 3 = persist the turn. Soft-falls to legacy
+    stateless mode if DATABASE_URL is unconfigured.
     """
     if not state.data_loaded:
         return JSONResponse(
@@ -282,28 +281,25 @@ async def chat(request: Request, req: ChatRequest):
             content={"error": "Data not loaded yet. Try again in a moment."},
         )
 
-    user = None
+    user_id: Optional[int] = None
     history: list = []
-    db_session: Optional[AsyncSession] = None
 
+    # ── Phase 1: auth + history fetch (short DB session) ──
     if db_ready():
-        # Auth required path
         try:
-            db_session_gen = get_session()
-            db_session = await db_session_gen.__anext__()
-            user = await auth.get_current_user(request, db_session)
-            history = await conversation_memory.get_recent_history(db_session, user.id)
+            from db import session_factory
+            async with session_factory()() as session:
+                user = await auth.get_current_user(request, session)
+                user_id = user.id
+                history = await conversation_memory.get_recent_history(session, user_id)
         except HTTPException:
-            if db_session is not None:
-                await db_session.close()
             raise
         except Exception as e:
             logger.error(f"Auth/history fetch failed: {e}", exc_info=True)
-            if db_session is not None:
-                await db_session.close()
-            db_session = None
-            user = None
+            user_id = None
+            history = []
 
+    # ── Phase 2: run handler — NO DB connection held ──
     try:
         update_from_message(req.session_id, req.message, state.df)
         result = await handle_message(
@@ -315,20 +311,6 @@ async def chat(request: Request, req: ChatRequest):
             history=history or None,
         )
         result["quote_state"] = snapshot_quote_state(req.session_id)
-
-        # Persist this turn to the user's rolling 7-day memory
-        if user is not None and db_session is not None:
-            try:
-                await conversation_memory.append_turn(
-                    db_session,
-                    user_id=user.id,
-                    user_message=req.message,
-                    assistant_message=result.get("response", ""),
-                )
-            except Exception as e:
-                logger.error(f"Failed to persist conversation turn: {e}")
-
-        return result
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         return JSONResponse(
@@ -338,9 +320,22 @@ async def chat(request: Request, req: ChatRequest):
                 "detail": str(e),
             },
         )
-    finally:
-        if db_session is not None:
-            await db_session.close()
+
+    # ── Phase 3: persist the turn (short DB session) ──
+    if user_id is not None and db_ready():
+        try:
+            from db import session_factory
+            async with session_factory()() as session:
+                await conversation_memory.append_turn(
+                    session,
+                    user_id=user_id,
+                    user_message=req.message,
+                    assistant_message=result.get("response", ""),
+                )
+        except Exception as e:
+            logger.error(f"Failed to persist conversation turn: {e}")
+
+    return result
 
 
 @app.post("/api/chat/reset")

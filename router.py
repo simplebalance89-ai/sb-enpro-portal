@@ -17,6 +17,29 @@ from governance import run_pre_checks, run_post_check, sanitize_response
 
 logger = logging.getLogger("enpro.router")
 
+# Coreference markers — when one of these appears in the user's message AND
+# we have non-empty conversation history, route the message through the GPT
+# path so the model can resolve "those parts" / "the second one" / "compare them"
+# against prior context. Without this, pandas-routed intents (lookup, compare,
+# manufacturer, supplier, price) silently drop history and the user's
+# follow-up gets misinterpreted as a fresh search.
+import re as _coref_re
+_COREF_PATTERN = _coref_re.compile(
+    r"\b("
+    r"that|those|these|this|it|them|they|"
+    r"the (?:first|second|third|fourth|fifth|last|previous|other|same|one|two|three) (?:one|option|product|part|filter|item)?|"
+    r"first one|second one|third one|last one|other one|"
+    r"previous|prior|earlier|just (?:showed|mentioned|said)|"
+    r"(?:compare|recompare) (?:them|those|these)"
+    r")\b",
+    _coref_re.IGNORECASE,
+)
+
+
+def _has_coreference(message: str) -> bool:
+    """Detect references to prior conversation turns."""
+    return bool(_COREF_PATTERN.search(message))
+
 # ---------------------------------------------------------------------------
 # System Prompts
 # ---------------------------------------------------------------------------
@@ -525,6 +548,14 @@ async def handle_message(
     # Advisory from pre-check (non-intercepting)
     advisory = pre_check.get("advisory") if pre_check else None
 
+    # --- Coreference upgrade ---
+    # If the user is referring to prior turns ("compare those", "the second one",
+    # "what about that part?") and we have history, the conversational answer
+    # lives in GPT with full context — not a fresh pandas lookup.
+    if history and _has_coreference(message) and intent in PANDAS_INTENTS:
+        logger.info(f"Coreference detected in '{message[:60]}' — upgrading {intent} → general (GPT with history)")
+        return await _handle_gpt(message, "general", df, chemicals_df, history, advisory)
+
     # --- Route to handler ---
     if intent in SCRIPTED_INTENTS:
         return {
@@ -940,14 +971,32 @@ async def _handle_gpt(
         "NEVER round, estimate, or approximate specs. Use exact values from the data or say 'Contact Enpro.'"
     )
 
-    # Build messages
+    # Build messages — inject prior turns as background context, then a topic
+    # boundary so the model doesn't blend old conversations into a new question.
     messages = []
     if history:
         messages.extend(history[-10:])  # Last 10 messages for context
 
+    # Topic-boundary preamble — prevents the model from anchoring on prior turns
+    # unless the user explicitly references them. Also protects the
+    # _validate_response_parts guard from flagging prior-turn parts as hallucinations.
+    boundary_note = ""
+    if history:
+        boundary_note = (
+            "[CONVERSATION CONTEXT] The messages above are this user's recent "
+            "conversation history (last 7 days). Use them ONLY to maintain "
+            "continuity if the user explicitly refers to prior turns "
+            "(e.g. 'that part', 'those filters', 'compare them'). Otherwise "
+            "treat the [USER MESSAGE] below as a new question and anchor your "
+            "answer to the [RELEVANT PRODUCTS FROM CATALOG] data attached to it, "
+            "NOT to products mentioned in earlier turns.\n\n"
+        )
+
     user_content = message
     if context_parts:
-        user_content = "\n\n".join(context_parts) + f"\n\n[USER MESSAGE]: {message}"
+        user_content = boundary_note + "\n\n".join(context_parts) + f"\n\n[USER MESSAGE]: {message}"
+    elif boundary_note:
+        user_content = boundary_note + f"[USER MESSAGE]: {message}"
 
     messages.append({"role": "user", "content": user_content})
 

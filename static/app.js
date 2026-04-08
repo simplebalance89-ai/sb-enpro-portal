@@ -31,11 +31,42 @@
     const SESSION_KEY = 'enpro_fm_session';
     const HISTORY_KEY = 'enpro_fm_history';
 
+    // ── Global 401 handler ──
+    // Wrap window.fetch once. Any non-auth-probe response with status 401 means
+    // the user's session expired or never existed — kick them to /login.html
+    // instead of surfacing a misleading "search failed" toast.
+    (function installAuthRedirect() {
+        if (window.__fmAuthRedirectInstalled) return;
+        window.__fmAuthRedirectInstalled = true;
+        var origFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            return origFetch(input, init).then(function (resp) {
+                try {
+                    var url = (typeof input === 'string') ? input : (input && input.url) || '';
+                    // Don't loop on the auth probe itself
+                    if (resp.status === 401 && url.indexOf('/api/auth/me') === -1) {
+                        window.location.replace('/login.html');
+                    }
+                } catch (_) {}
+                return resp;
+            });
+        };
+    })();
+
     // ── State ──
-    let sessionId = localStorage.getItem(SESSION_KEY);
-    if (!sessionId) {
-        sessionId = crypto.randomUUID ? crypto.randomUUID() : uuidFallback();
-        localStorage.setItem(SESSION_KEY, sessionId);
+    // Bind session to the logged-in user when available so the 7-day memory
+    // layer stays consistent across tabs/refreshes for that user. Auth gate in
+    // index.html sets window.__FM_USER before app.js loads. Falls back to a
+    // random UUID for unauth/legacy mode (DB not configured).
+    let sessionId;
+    if (window.__FM_USER && window.__FM_USER.id) {
+        sessionId = 'u' + window.__FM_USER.id;
+    } else {
+        sessionId = localStorage.getItem(SESSION_KEY);
+        if (!sessionId) {
+            sessionId = crypto.randomUUID ? crypto.randomUUID() : uuidFallback();
+            localStorage.setItem(SESSION_KEY, sessionId);
+        }
     }
     let lastFollowUps = [];   // Track numbered options
     let isLoading = false;
