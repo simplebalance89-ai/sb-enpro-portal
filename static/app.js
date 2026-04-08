@@ -661,6 +661,21 @@
             renderContextCard();
         }
 
+        // ── V2.10 Structured response rendering ──
+        // When the backend returns the new structured shape (headline + picks
+        // + follow_up + body) from _handle_gpt's JSON parser, render it as a
+        // scannable card layout: bold headline first, then ranked picks each
+        // with a soft-blue reason callout above the product card, then the
+        // optional body context, then the follow-up question. This is the
+        // chat-side equivalent of the Phase 2c voice rendering.
+        if (data.structured && data.headline) {
+            renderStructuredChatResponse(data);
+            scrollToBottom();
+            searchCount++;
+            checkAutoReset();
+            return;
+        }
+
         // Chemical intent — parse GPT text into structured card
         if (data.intent === 'chemical' && data.response && !data.chemical) {
             var parsed = parseChemicalResponse(data.response);
@@ -870,6 +885,91 @@
     };
 
     // ── Render product card ──
+    // ── Structured chat response renderer (V2.10) ──
+    // Renders the new {headline, picks, follow_up, body} shape from
+    // /api/chat into a scannable card layout. Mirrors renderVoiceResponse
+    // but sourced from data.products (chat returns full product records)
+    // instead of data.results + data.candidates (voice).
+    window.renderStructuredChatResponse = function (data) {
+        var headline = data.headline || '';
+        var picks = data.picks || [];
+        var followUp = data.follow_up || '';
+        var body = data.body || '';
+        var products = data.products || [];
+
+        // Match a pick.part_number against the products payload
+        function findProductByPN(pn) {
+            if (!pn) return null;
+            var target = String(pn).trim().toUpperCase();
+            for (var i = 0; i < products.length; i++) {
+                var p = products[i] || {};
+                var candidate = (p.Part_Number || p.part_number || p.Alt_Code || p.alt_code || '').toString().trim().toUpperCase();
+                if (candidate === target) return p;
+            }
+            return null;
+        }
+
+        // 1. Bold headline as the first message
+        if (headline) {
+            appendMessage('bot',
+                '<div style="font-size:16px;font-weight:600;color:#0a1628;line-height:1.4;">' +
+                esc(headline) + '</div>'
+            );
+        }
+
+        // 2. Optional body context (1-2 sentences) below headline
+        if (body) {
+            appendMessage('bot',
+                '<div style="font-size:14px;color:#444;line-height:1.5;margin-top:-2px;">' +
+                formatMarkdown(body) + '</div>'
+            );
+        }
+
+        // 3. Each pick: reason callout + product card
+        var rendered = {};
+        picks.forEach(function (pick) {
+            var pn = (pick.part_number || '').toString().trim().toUpperCase();
+            if (!pn) return;
+            var product = findProductByPN(pn);
+
+            var reasonHtml =
+                '<div class="fm-rec-reason" style="' +
+                'background:#eef4ff;border-left:3px solid #0066CC;' +
+                'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
+                'font-size:14px;line-height:1.5;color:#0a1628;">' +
+                '<strong>' + esc(pn) + '</strong> — ' +
+                esc(pick.reason || '') +
+                '</div>';
+            appendMessage('bot', reasonHtml);
+
+            if (product) {
+                appendCard(renderProductCard(product));
+                rendered[pn] = true;
+            }
+        });
+
+        // 4. Show any catalog products NOT covered by picks below as
+        //    "Other options" — gives the rep more to scan if they want it.
+        var leftover = products.filter(function (p) {
+            var pn = (p.Part_Number || p.part_number || p.Alt_Code || '').toString().trim().toUpperCase();
+            return pn && !rendered[pn];
+        });
+        if (leftover.length > 0 && picks.length > 0) {
+            appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
+            leftover.slice(0, 3).forEach(function (product) {
+                appendCard(renderProductCard(product));
+            });
+        }
+
+        // 5. Follow-up question — italicized, conversational
+        if (followUp) {
+            appendMessage('bot',
+                '<div style="font-style:italic;color:#444;font-size:14px;margin-top:8px;">' +
+                esc(followUp) + '</div>'
+            );
+        }
+    };
+
     // ── Conversational voice-search response renderer (Phase 2c) ──
     // Replaces the old "X products found" data-dump header with a ranked,
     // reasoned list. Reads data.recommendations (Phase 2 GPT re-rank) and

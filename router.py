@@ -213,9 +213,24 @@ Examples:
 
 REASONING_SYSTEM_PROMPT = """You are the Enpro Filtration Mastermind — the most knowledgeable filtration person at Enpro, talking to a field sales rep on their phone.
 
-Your job is to feel like a colleague the rep is calling between meetings, not a database. Listen, narrow, recommend with reasoning, and ask one smart question if you need more info. Speak in short, conversational paragraphs — not numbered tables.
+You MUST respond with a JSON object — no markdown fences, no commentary, just the JSON. The frontend renders this as a scannable card layout with a headline, ranked picks, and a follow-up question. The shape:
 
-## CORE PRINCIPLES (in priority order)
+{
+  "headline": "ONE-LINE answer the rep can scan in 1 second. Lead with the verdict, not the reasoning. Required.",
+  "picks": [
+    {"part_number": "EXACT_PN_FROM_CATALOG", "reason": "ONE plain sentence: why this is a fit. Mention price + stock if relevant."}
+  ],
+  "follow_up": "ONE conversational question to narrow further or move the deal forward. Optional — use null if none needed.",
+  "body": "Optional 1-3 sentences of additional context that doesn't fit in the headline. Use null if the headline + picks say it all."
+}
+
+Rules:
+- picks: 1-3 items max, ranked strongest first. ONLY use part_numbers from the [RELEVANT PRODUCTS FROM CATALOG] data attached. NEVER invent. If no good fit exists, return picks: [] and explain in body.
+- For pure-knowledge questions (no product ranking applies — escalations, chemical, definitions, out-of-scope), return picks: [] and put the answer in body. headline still required.
+- Speak plainly. Mobile-friendly. No numbered tables. No "1./2./3." format. The card layout handles ranking visually.
+- The user's message arrives below the catalog data. Use ONLY catalog products. NEVER cite prior-turn products unless they appear in the current catalog block too.
+
+## TONE PRINCIPLES (apply within the JSON fields above)
 
 1. Accuracy first. Reps will repeat what you say to customers. Every part number, price, spec, manufacturer, and stock figure MUST come from the [RELEVANT PRODUCTS FROM CATALOG] data attached to the user's message — and NEVER from prior chat turns unless they appear there too. If a spec is missing, say "Not in catalog — I'd check with the office on that one." Never guess. Never invent. Never round.
 
@@ -290,9 +305,24 @@ If it's not filtration, say so briefly and warmly: "That's outside what I do —
 - Never recommend a part that isn't in the catalog data attached to this message.
 """
 
-PREGAME_SYSTEM_PROMPT = """You are the Enpro Filtration Mastermind — and you're prepping a sales rep for a customer meeting. The rep is on their phone in the parking lot before they walk in.
+PREGAME_SYSTEM_PROMPT = """You are the Enpro Filtration Mastermind — prepping a sales rep for a customer meeting. The rep is on their phone in the parking lot.
 
-You're not generating a formatted prep sheet. You're talking to them like the most knowledgeable filtration colleague they know. Two short paragraphs, max — what to lead with, the one specific product recommendation that fits, and the one question they should ask in the meeting.
+Respond with a JSON object — no markdown fences, no commentary:
+
+{
+  "headline": "ONE-LINE customer-focused lead. What this customer cares about. Required.",
+  "picks": [
+    {"part_number": "EXACT_PN_FROM_CATALOG", "reason": "ONE sentence: why this fits THIS customer's pain point."}
+  ],
+  "follow_up": "The single best question to ask in the meeting. Required for pregames.",
+  "body": "1-2 sentences of context: what to lead with, what NOT to bring up. Optional."
+}
+
+Rules:
+- picks: 1-3 strongest fits from [RELEVANT PRODUCTS FROM CATALOG], ranked. NEVER invent.
+- The headline should be customer-pain-shaped: "Data center HVAC operators care about pressure drop creep and changeout downtime more than first cost." NOT a product name.
+- The follow_up is the meeting closer: a question that qualifies or moves the deal.
+- No bullets. No "Customer Focus:" headers. No 5-bullet structures. The JSON IS the structure.
 
 ## STRUCTURE (in prose, not bullets)
 
@@ -998,6 +1028,90 @@ def _try_chemical_fast_path(
     }
 
 
+def _parse_structured_response(raw: str, provided_products: list) -> Optional[dict]:
+    """
+    Try to parse the GPT response as the structured JSON shape:
+    {headline, picks: [{part_number, reason}], follow_up, body}.
+
+    Strips markdown fences first. Validates that picks reference real
+    part numbers from the catalog data we just gave the model — anything
+    that's not in the provided_products set gets dropped (anti-hallucination,
+    same guarantee as the voice rerank validator).
+
+    Returns None on any parse failure or shape mismatch — caller falls
+    through to legacy plain-text handling.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    # Strip ```json … ``` fences if present
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    # Some models prefix "json\n" without fences
+    if text.lower().startswith("json\n"):
+        text = text[5:]
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if not parsed.get("headline"):
+        return None
+
+    # Build the trusted PN set from the catalog block we just provided
+    valid_pns: set[str] = set()
+    for p in provided_products:
+        for key in ("Part_Number", "Alt_Code", "Supplier_Code"):
+            v = p.get(key)
+            if v:
+                valid_pns.add(str(v).strip().upper())
+
+    # Filter picks: drop any pick whose part_number isn't in the catalog
+    raw_picks = parsed.get("picks") or []
+    clean_picks = []
+    if isinstance(raw_picks, list):
+        for pick in raw_picks:
+            if not isinstance(pick, dict):
+                continue
+            pn = str(pick.get("part_number") or "").strip().upper()
+            reason = str(pick.get("reason") or "").strip()
+            if not pn or not reason:
+                continue
+            if valid_pns and pn not in valid_pns:
+                logger.warning(f"_parse_structured_response: dropped invented pick {pn}")
+                continue
+            clean_picks.append({"part_number": pn, "reason": reason})
+
+    return {
+        "headline": str(parsed.get("headline") or "").strip(),
+        "picks": clean_picks[:3],
+        "follow_up": (str(parsed.get("follow_up") or "").strip() or None),
+        "body": (str(parsed.get("body") or "").strip() or None),
+    }
+
+
+def _structured_to_plain(s: dict) -> str:
+    """Render the structured response to a plain-text fallback that legacy
+    voice/email surfaces can still consume. Frontend cards will render the
+    structured fields directly and ignore this prose form."""
+    parts = [s.get("headline", "")]
+    if s.get("body"):
+        parts.append("")
+        parts.append(s["body"])
+    picks = s.get("picks") or []
+    if picks:
+        parts.append("")
+        for i, pick in enumerate(picks, 1):
+            parts.append(f"{i}. {pick['part_number']} — {pick['reason']}")
+    if s.get("follow_up"):
+        parts.append("")
+        parts.append(s["follow_up"])
+    return "\n".join(p for p in parts if p is not None).strip()
+
+
 async def _handle_gpt(
     message: str,
     intent: str,
@@ -1130,19 +1244,43 @@ async def _handle_gpt(
     try:
         response = await reason(system_prompt, messages)
 
-        # Post-check
+        # Try to parse the model's response as the structured JSON shape
+        # (REASONING_SYSTEM_PROMPT and PREGAME_SYSTEM_PROMPT both ask for it).
+        # On parse failure we fall through to legacy plain-text handling so
+        # the user always gets *something* — never a 500.
+        structured = _parse_structured_response(response, search_result.get("results", []))
+
+        if structured:
+            # Build the plain-text rendering for clients that don't render
+            # structured fields (legacy callers, voice readback, fallback).
+            plain = _structured_to_plain(structured)
+            # Validate any part_numbers cited in the prose form too
+            plain = _validate_response_parts(
+                plain, search_result.get("results", []), df, history=history
+            )
+            plain = _strip_kb_references(plain)
+
+            return {
+                "response": plain,
+                "headline": structured.get("headline"),
+                "picks": structured.get("picks") or [],
+                "follow_up": structured.get("follow_up"),
+                "body": structured.get("body"),
+                "intent": intent,
+                "cost": "~$0.02",
+                "products": search_result.get("results", []),
+                "structured": True,
+            }
+
+        # Legacy plain-text path (model didn't return parseable JSON)
         post_check = run_post_check(response)
         if not post_check["valid"]:
             logger.warning(f"Post-check issues: {post_check['issues']}")
             response = sanitize_response(response)
 
-        # Anti-hallucination: validate part numbers in response against catalog,
-        # unioned with prior-turn PNs from this user's history (G7 fix)
         response = _validate_response_parts(
             response, search_result.get("results", []), df, history=history
         )
-
-        # Strip internal KB references from user-facing output
         response = _strip_kb_references(response)
 
         return {
@@ -1150,6 +1288,7 @@ async def _handle_gpt(
             "intent": intent,
             "cost": "~$0.02",
             "products": search_result.get("results", []),
+            "structured": False,
         }
     except Exception as e:
         logger.error(f"GPT reasoning failed: {e}")
