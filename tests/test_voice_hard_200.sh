@@ -56,8 +56,10 @@ tv() {
         -H "Content-Type: application/json" \
         -d "{\"message\": \"$query\"}" 2>/dev/null || echo '{"error":"timeout"}')
 
+    # Robust extraction — pipefail-safe even when response has no total_found field
     local found
-    found=$(echo "$response" | grep -o '"total_found":[0-9]*' | grep -o '[0-9]*' || echo "0")
+    found=$(echo "$response" | grep -o '"total_found":[0-9]*' | head -1 | grep -o '[0-9]*' | head -1 || true)
+    found="${found:-0}"
 
     local issues=""
     if [ "$expect" = "yes" ] && [ "$found" = "0" ]; then

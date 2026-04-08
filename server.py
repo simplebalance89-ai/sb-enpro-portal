@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.3.0",
+    version="2.3.1",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -271,21 +271,24 @@ async def health():
 
 async def _chat_auth_and_history(request: Request) -> tuple[Optional[int], list]:
     """
-    Phase 1 of any history-aware endpoint: short DB session, fetch user +
-    recent history. Returns (user_id, history). Raises HTTPException 401 if
-    auth is required and missing/invalid. Soft-falls to (None, []) if DB is
-    not configured. ONLY swallows DB connection errors so a real auth bug
-    surfaces in logs and to the client instead of silently downgrading.
+    Phase 1 of any history-aware endpoint: short DB session, look up the
+    optional logged-in user + their recent history.
+
+    SOFT by design: returns (None, []) if DB is unconfigured, no cookie is
+    present, or the cookie is invalid. Endpoints that require auth (like
+    /api/chat) must enforce it themselves after calling this helper.
+    Endpoints that should keep working for anonymous callers (voice search,
+    chemical compatibility) just use whatever this returns.
     """
     if not db_ready():
         return None, []
     try:
         async with session_factory()() as session:
-            user = await auth.get_current_user(request, session)
+            user = await auth.get_current_user_optional(request, session)
+            if user is None:
+                return None, []
             history = await conversation_memory.get_recent_history(session, user.id)
             return user.id, history
-    except HTTPException:
-        raise
     except (OperationalError, DBAPIError, ConnectionError) as e:
         logger.error(f"DB connection error during auth/history fetch: {e}", exc_info=True)
         return None, []
@@ -335,6 +338,12 @@ async def chat(request: Request, req: ChatRequest):
         )
 
     user_id, history = await _chat_auth_and_history(request)
+
+    # /api/chat REQUIRES auth when DB is configured. Voice + chemical
+    # endpoints stay open for anonymous callers (the soft helper above
+    # returns None for them); /api/chat does not.
+    if db_ready() and user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
         update_from_message(req.session_id, req.message, state.df)
