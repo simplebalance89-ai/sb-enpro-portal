@@ -9,3 +9,7 @@ python-multipart==0.0.20
 rapidfuzz==3.12.2
 metaphone==0.6
 slowapi==0.1.9
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+bcrypt==4.2.1
+itsdangerous==2.2.0

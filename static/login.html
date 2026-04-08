@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enpro Filtration Mastermind — Sign In</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #003366 0%, #0066CC 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1f2937;
+  }
+  .card {
+    background: #fff;
+    width: 100%;
+    max-width: 380px;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 36px 32px;
+    margin: 16px;
+    text-align: center;
+  }
+  h1 {
+    margin: 0 0 4px 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: #003366;
+  }
+  .sub {
+    margin: 0 0 28px 0;
+    font-size: 13px;
+    color: #6b7280;
+  }
+  label {
+    display: block;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    color: #374151;
+    margin: 0 0 6px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  select, input {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    margin-bottom: 18px;
+    outline: none;
+    background: #fff;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  select:focus, input:focus {
+    border-color: #0066CC;
+    box-shadow: 0 0 0 3px rgba(0,102,204,0.18);
+  }
+  #pin {
+    text-align: center;
+    letter-spacing: 0.5em;
+    font-size: 22px;
+    font-weight: 600;
+  }
+  button {
+    width: 100%;
+    padding: 13px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: #003366;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #0066CC; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  .err {
+    color: #b91c1c;
+    font-size: 13px;
+    margin-bottom: 10px;
+    min-height: 18px;
+  }
+  .footer {
+    margin-top: 18px;
+    text-align: center;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+</style>
+</head>
+<body>
+  <form class="card" id="login-form" autocomplete="off">
+    <h1>Filtration Mastermind</h1>
+    <p class="sub">Pilot sign in</p>
+    <div class="err" id="err"></div>
+    <label for="user">Who's signing in?</label>
+    <select id="user" name="user" required>
+      <option value="">Loading…</option>
+    </select>
+    <label for="pin">PIN</label>
+    <input id="pin" name="pin" type="tel" inputmode="numeric" pattern="[0-9]*"
+           maxlength="6" required autocomplete="off" placeholder="• • • •">
+    <button type="submit" id="submit-btn" disabled>Sign In</button>
+    <div class="footer">Enpro Industries · Pilot</div>
+  </form>
+<script>
+(function() {
+  var form = document.getElementById('login-form');
+  var btn = document.getElementById('submit-btn');
+  var errEl = document.getElementById('err');
+  var userSel = document.getElementById('user');
+  var pinInput = document.getElementById('pin');
+
+  // Load pilot users
+  fetch('/api/auth/users', { credentials: 'same-origin' })
+    .then(function(r) { return r.ok ? r.json() : Promise.reject(r); })
+    .then(function(users) {
+      userSel.innerHTML = '<option value="">Select your name…</option>';
+      users.forEach(function(u) {
+        var opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = u.name;
+        userSel.appendChild(opt);
+      });
+      btn.disabled = false;
+    })
+    .catch(function() {
+      userSel.innerHTML = '<option value="">No users available</option>';
+      errEl.textContent = 'Could not load users. Try refresh.';
+    });
+
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    errEl.textContent = '';
+    if (!userSel.value) {
+      errEl.textContent = 'Pick your name first.';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    try {
+      var resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          user_id: parseInt(userSel.value, 10),
+          pin: pinInput.value
+        })
+      });
+      if (!resp.ok) {
+        var data = {};
+        try { data = await resp.json(); } catch (_) {}
+        errEl.textContent = data.detail || 'Sign in failed.';
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+        pinInput.value = '';
+        pinInput.focus();
+        return;
+      }
+      window.location.href = '/';
+    } catch (err) {
+      errEl.textContent = 'Network error. Try again.';
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    }
+  });
+})();
+</script>
+</body>
+</html>

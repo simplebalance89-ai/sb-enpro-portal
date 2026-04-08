@@ -39,6 +39,11 @@ from voice_search import init_voice_search, voice_search_pipeline
 from voice_gate import VoiceGate
 from voice_echo import VoiceEcho
 
+import auth
+import conversation_memory
+from db import close_db, get_session, init_db, is_ready as db_ready
+from sqlalchemy.ext.asyncio import AsyncSession
+
 logger = logging.getLogger("enpro.server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
@@ -123,10 +128,28 @@ async def lifespan(app: FastAPI):
     # Start background inventory refresh
     refresh_task = asyncio.create_task(_refresh_inventory_loop())
 
+    # Initialize Postgres (auth + conversation memory). Soft-fail if DATABASE_URL unset.
+    cleanup_task = None
+    try:
+        if await init_db():
+            # Seed pilot users (idempotent)
+            from db import session_factory
+            async with session_factory()() as s:
+                inserted = await auth.seed_pilot_users(s)
+                if inserted:
+                    logger.info(f"Seeded {inserted} pilot users")
+            cleanup_task = asyncio.create_task(conversation_memory.cleanup_loop())
+            logger.info("Auth + conversation memory ready")
+    except Exception as db_err:
+        logger.error(f"Database init failed (auth/memory disabled): {db_err}")
+
     yield
 
     # Shutdown
     refresh_task.cancel()
+    if cleanup_task is not None:
+        cleanup_task.cancel()
+    await close_db()
     await close_client()
     logger.info("Enpro Filtration Mastermind Portal stopped.")
 
@@ -155,6 +178,9 @@ app.add_middleware(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Auth router (/api/auth/login, /logout, /me)
+app.include_router(auth.router)
 
 
 # Admin auth dependency — require X-Admin-Token header if ADMIN_TOKEN is set
@@ -230,12 +256,40 @@ async def health():
 async def chat(request: Request, req: ChatRequest):
     """
     Main chat endpoint. Classifies intent, runs governance, routes to handler.
+
+    When auth is configured, the call is gated to a logged-in user and recent
+    conversation history (last 7 days, capped at MAX_HISTORY_MESSAGES) is fetched
+    from Postgres and injected into the GPT prompt — and the new turn is
+    persisted on the way out. When auth is not configured, behavior falls back
+    to the legacy stateless mode so a misconfigured deploy never bricks chat.
     """
     if not state.data_loaded:
         return JSONResponse(
             status_code=503,
             content={"error": "Data not loaded yet. Try again in a moment."},
         )
+
+    user = None
+    history: list = []
+    db_session: Optional[AsyncSession] = None
+
+    if db_ready():
+        # Auth required path
+        try:
+            db_session_gen = get_session()
+            db_session = await db_session_gen.__anext__()
+            user = await auth.get_current_user(request, db_session)
+            history = await conversation_memory.get_recent_history(db_session, user.id)
+        except HTTPException:
+            if db_session is not None:
+                await db_session.close()
+            raise
+        except Exception as e:
+            logger.error(f"Auth/history fetch failed: {e}", exc_info=True)
+            if db_session is not None:
+                await db_session.close()
+            db_session = None
+            user = None
 
     try:
         update_from_message(req.session_id, req.message, state.df)
@@ -245,8 +299,22 @@ async def chat(request: Request, req: ChatRequest):
             mode=req.mode,
             df=state.df,
             chemicals_df=state.chemicals_df,
+            history=history or None,
         )
         result["quote_state"] = snapshot_quote_state(req.session_id)
+
+        # Persist this turn to the user's rolling 7-day memory
+        if user is not None and db_session is not None:
+            try:
+                await conversation_memory.append_turn(
+                    db_session,
+                    user_id=user.id,
+                    user_message=req.message,
+                    assistant_message=result.get("response", ""),
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist conversation turn: {e}")
+
         return result
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
@@ -257,6 +325,17 @@ async def chat(request: Request, req: ChatRequest):
                 "detail": str(e),
             },
         )
+    finally:
+        if db_session is not None:
+            await db_session.close()
+
+
+@app.post("/api/chat/reset")
+async def chat_reset(request: Request, db_session: AsyncSession = Depends(get_session)):
+    """Clear the logged-in user's conversation memory ('start fresh')."""
+    user = await auth.get_current_user(request, db_session)
+    deleted = await conversation_memory.clear_user_history(db_session, user.id)
+    return {"ok": True, "deleted": deleted}
 
 
 @app.post("/api/lookup")

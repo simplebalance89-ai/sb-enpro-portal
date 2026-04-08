@@ -4,6 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Enpro Filtration Mastermind</title>
+    <script>
+    // Auth gate: redirect to /login.html if not authenticated.
+    // Soft-fail (continue rendering) if /api/auth/me returns 503 — auth not configured.
+    (function() {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/api/auth/me', false); // sync — runs before page paints
+        xhr.withCredentials = true;
+        xhr.send();
+        if (xhr.status === 401) {
+          window.location.replace('/login.html');
+        } else if (xhr.status === 200) {
+          try { window.__FM_USER = JSON.parse(xhr.responseText); } catch (_) {}
+        }
+        // 503 = auth not configured yet; allow page to render in legacy mode
+      } catch (e) {
+        // Network error during gate — let the page load; chat calls will surface real errors
+      }
+    })();
+    </script>
     <style>
         :root {
             --navy: #003366;
