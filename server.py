@@ -13,7 +13,7 @@ import httpx
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.10.0",
+    version="2.11.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -379,6 +379,151 @@ async def chat(request: Request, req: ChatRequest):
         products=result.get("products"),
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Streaming chat — SSE perceived-streaming (V2.11)
+# ---------------------------------------------------------------------------
+
+import json as _stream_json
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format a single Server-Sent Event line per the W3C spec."""
+    return f"event: {event}\ndata: {_stream_json.dumps(data, default=str)}\n\n"
+
+
+async def _chat_stream_generator(request: Request, req: ChatRequest):
+    """
+    Stream a chat response as SSE events. The full structured answer is
+    computed up front (one GPT call via handle_message); then yielded as
+    discrete events with small async pauses so the frontend can render
+    chunks progressively. Visual streaming without the brittleness of
+    parsing partial JSON tokens.
+
+    Event sequence:
+      1. ready       — session is good, work is starting (renders typing dot)
+      2. headline    — bold one-line answer
+      3. body        — optional context paragraph
+      4. pick        — one product pick (emitted N times for N picks)
+      5. other       — leftover catalog products not in picks
+      6. follow_up   — italicized closing question
+      7. done        — terminal event with quote_state, intent, cost
+      error          — sent on any failure with detail string
+    """
+    if not state.data_loaded:
+        yield _sse_event("error", {"error": "Data not loaded yet. Try again in a moment."})
+        return
+
+    # Auth + history fetch (same soft helper as /api/chat)
+    user_id, history = await _chat_auth_and_history(request)
+    if db_ready() and user_id is None:
+        yield _sse_event("error", {"error": "Not authenticated", "status": 401})
+        return
+
+    yield _sse_event("ready", {"ts": datetime.utcnow().isoformat()})
+
+    # Run the handler — this is the blocking GPT call
+    try:
+        update_from_message(req.session_id, req.message, state.df)
+        result = await handle_message(
+            message=req.message,
+            session_id=req.session_id,
+            mode=req.mode,
+            df=state.df,
+            chemicals_df=state.chemicals_df,
+            history=history or None,
+        )
+        result["quote_state"] = snapshot_quote_state(req.session_id)
+    except Exception as e:
+        logger.error(f"Stream chat error: {e}", exc_info=True)
+        yield _sse_event("error", {"error": "Something went wrong. Try again or contact Enpro directly.", "detail": str(e)})
+        return
+
+    # Persist the turn (same Phase 3 logic as /api/chat)
+    await _persist_turn(
+        user_id,
+        req.message,
+        result.get("response", ""),
+        products=result.get("products"),
+    )
+
+    # Now stream the structured shape in chunks. If the model returned
+    # legacy plain-text (parser fell through), wrap it as a single body.
+    products_by_pn: dict = {}
+    for p in result.get("products") or []:
+        pn = (p.get("Part_Number") or p.get("Alt_Code") or p.get("part_number") or "")
+        if pn:
+            products_by_pn[str(pn).strip().upper()] = p
+
+    if result.get("structured") and result.get("headline"):
+        # Structured path — stream chunks with small pauses
+        yield _sse_event("headline", {"text": result["headline"]})
+        await asyncio.sleep(0.18)
+
+        if result.get("body"):
+            yield _sse_event("body", {"text": result["body"]})
+            await asyncio.sleep(0.22)
+
+        rendered_pns: set = set()
+        for pick in (result.get("picks") or []):
+            pn = str(pick.get("part_number") or "").strip().upper()
+            product = products_by_pn.get(pn)
+            yield _sse_event("pick", {
+                "part_number": pn,
+                "reason": pick.get("reason", ""),
+                "product": product,
+            })
+            rendered_pns.add(pn)
+            await asyncio.sleep(0.28)
+
+        # Other catalog options not covered by picks
+        leftover = [
+            p for p in (result.get("products") or [])
+            if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
+        ]
+        if leftover:
+            yield _sse_event("other", {"products": leftover[:3]})
+            await asyncio.sleep(0.18)
+
+        if result.get("follow_up"):
+            yield _sse_event("follow_up", {"text": result["follow_up"]})
+            await asyncio.sleep(0.10)
+    else:
+        # Legacy plain-text path
+        yield _sse_event("body", {"text": result.get("response", "")})
+        for p in (result.get("products") or [])[:5]:
+            yield _sse_event("other", {"products": [p]})
+            await asyncio.sleep(0.10)
+
+    # Terminal event
+    yield _sse_event("done", {
+        "intent": result.get("intent"),
+        "cost": result.get("cost"),
+        "quote_state": result.get("quote_state"),
+        "structured": result.get("structured", False),
+    })
+
+
+@app.post("/api/chat/stream")
+@limiter.limit("20/minute")
+async def chat_stream(request: Request, req: ChatRequest):
+    """
+    SSE streaming variant of /api/chat. Same auth + memory + handler
+    pipeline as /api/chat, but yields the response in discrete chunks
+    so the frontend can render progressively. Drop-in replacement at
+    the URL level — clients that want the streaming UX point at this
+    endpoint; clients that want a single JSON response stay on /api/chat.
+    """
+    return StreamingResponse(
+        _chat_stream_generator(request, req),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx/proxy buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.post("/api/session/migrate")

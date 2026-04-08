@@ -484,6 +484,179 @@
     };
 
     // ── Core: sendMessage ──
+    // ── SSE streaming chat consumer (V2.11) ──
+    // POSTs to /api/chat/stream and progressively renders the response as
+    // it arrives. Each event from the server triggers an inline render so
+    // the headline appears instantly, picks build one at a time, and the
+    // follow-up question lands last. The user sees the answer being
+    // assembled in real time instead of waiting for a single payload.
+    //
+    // Returns {ok: true, summary: {intent, cost}} on success, or null/
+    // {ok: false} on failure (caller falls back to the legacy fetch path).
+    async function sendMessageStreaming(text) {
+        if (typeof TextDecoder === 'undefined' || !window.fetch) return null;
+
+        var resp;
+        try {
+            resp = await fetch(API_BASE + '/api/chat/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                },
+                body: JSON.stringify({ message: text, session_id: sessionId }),
+            });
+        } catch (e) {
+            return null;
+        }
+        if (!resp.ok || !resp.body) {
+            return { ok: false };
+        }
+
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder('utf-8');
+        var buffer = '';
+        var summary = {};
+
+        function processEvent(rawBlock) {
+            // SSE event format: "event: NAME\ndata: JSON\n\n"
+            var lines = rawBlock.split('\n');
+            var eventName = 'message';
+            var dataStr = '';
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i];
+                if (line.indexOf('event:') === 0) {
+                    eventName = line.slice(6).trim();
+                } else if (line.indexOf('data:') === 0) {
+                    dataStr += line.slice(5).trim();
+                }
+            }
+            if (!dataStr) return;
+            var data;
+            try { data = JSON.parse(dataStr); } catch (_) { return; }
+            handleStreamEvent(eventName, data, summary);
+        }
+
+        // Read the stream until done
+        try {
+            while (true) {
+                var chunk = await reader.read();
+                if (chunk.done) break;
+                buffer += decoder.decode(chunk.value, { stream: true });
+                // SSE delimiter is double newline
+                var blocks = buffer.split('\n\n');
+                buffer = blocks.pop(); // last partial block stays in buffer
+                for (var i = 0; i < blocks.length; i++) {
+                    processEvent(blocks[i]);
+                }
+            }
+            // Flush any final block
+            if (buffer.trim()) processEvent(buffer);
+        } catch (e) {
+            console.error('Stream read error:', e);
+            return { ok: false };
+        }
+
+        return { ok: true, summary: summary };
+    }
+
+    // Render a single SSE event into the chat. Each event type maps to a
+    // visual chunk. The shared `summary` object accumulates terminal info
+    // (intent, cost, quote_state) for the trackQuery call after stream end.
+    function handleStreamEvent(eventName, data, summary) {
+        switch (eventName) {
+            case 'ready':
+                // Server is working — could show a typing dot here.
+                // setLoading already shows the typingIndicator so this
+                // is currently a no-op marker.
+                break;
+
+            case 'headline':
+                if (data.text) {
+                    appendMessage('bot',
+                        '<div style="font-size:16px;font-weight:600;color:#0a1628;line-height:1.4;">' +
+                        esc(data.text) + '</div>'
+                    );
+                    scrollToBottom();
+                }
+                break;
+
+            case 'body':
+                if (data.text) {
+                    appendMessage('bot',
+                        '<div style="font-size:14px;color:#444;line-height:1.5;">' +
+                        formatMarkdown(data.text) + '</div>'
+                    );
+                    scrollToBottom();
+                }
+                break;
+
+            case 'pick':
+                var pn = (data.part_number || '').toString().toUpperCase();
+                var reason = data.reason || '';
+                var product = data.product;
+                if (pn) {
+                    appendMessage('bot',
+                        '<div class="fm-rec-reason" style="' +
+                        'background:#eef4ff;border-left:3px solid #0066CC;' +
+                        'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
+                        'font-size:14px;line-height:1.5;color:#0a1628;">' +
+                        '<strong>' + esc(pn) + '</strong> — ' + esc(reason) +
+                        '</div>'
+                    );
+                }
+                if (product) {
+                    appendCard(renderProductCard(product));
+                }
+                scrollToBottom();
+                break;
+
+            case 'other':
+                if (data.products && data.products.length > 0) {
+                    appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
+                    data.products.forEach(function (p) {
+                        appendCard(renderProductCard(p));
+                    });
+                    scrollToBottom();
+                }
+                break;
+
+            case 'follow_up':
+                if (data.text) {
+                    appendMessage('bot',
+                        '<div style="font-style:italic;color:#444;font-size:14px;margin-top:8px;">' +
+                        esc(data.text) + '</div>'
+                    );
+                    scrollToBottom();
+                }
+                break;
+
+            case 'done':
+                summary.intent = data.intent;
+                summary.cost = data.cost;
+                if (data.quote_state) {
+                    syncQuoteState(data.quote_state);
+                }
+                searchCount++;
+                checkAutoReset();
+                break;
+
+            case 'error':
+                var msg = data.error || 'Connection error.';
+                if (data.status === 401) {
+                    // Auth gate — redirect to login
+                    window.location.replace('/login.html');
+                    return;
+                }
+                appendMessage('bot', esc(msg));
+                break;
+
+            default:
+                // Unknown event — ignore
+                break;
+        }
+    }
+
     window.sendMessage = async function (text) {
         if (isLoading) return;
 
@@ -504,15 +677,25 @@
         var queryStart = Date.now();
 
         try {
-            const res = await fetch(API_BASE + '/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, session_id: sessionId })
-            });
-            const data = await res.json();
-            handleResponse(data);
-            trackQuery(queryStart, data);
-            trackSearch(text, data.intent);
+            // V2.11: stream the response via SSE so headline + picks build
+            // progressively in the UI. Falls back to non-stream JSON path on
+            // any failure (network error, server returns non-200, etc).
+            var streamed = await sendMessageStreaming(text);
+            if (streamed && streamed.ok) {
+                trackQuery(queryStart, streamed.summary || {});
+                trackSearch(text, (streamed.summary && streamed.summary.intent) || '');
+            } else {
+                // Fallback: legacy single JSON response
+                const res = await fetch(API_BASE + '/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, session_id: sessionId })
+                });
+                const data = await res.json();
+                handleResponse(data);
+                trackQuery(queryStart, data);
+                trackSearch(text, data.intent);
+            }
         } catch (err) {
             appendMessage('bot', 'Connection error. Please check your network and try again.');
             console.error('Chat error:', err);
