@@ -28,14 +28,25 @@ logger = logging.getLogger("enpro.router")
 import re as _coref_re
 _COREF_PATTERN = _coref_re.compile(
     r"("
+    # Plural anchors
     r"\bthose\s+(?:parts?|filters?|products?|options?|items?|two|three|four|five)\b|"
     r"\bthese\s+(?:parts?|filters?|products?|options?|items?)\b|"
+    # Singular anchors
     r"\bthat\s+(?:part|filter|product|option|item|one)\b|"
     r"\bthe\s+(?:first|second|third|fourth|fifth|last|previous|other|same)\s+(?:one|option|product|part|filter|item)?\b|"
     r"\b(?:first|second|third|last|other)\s+one\b|"
-    r"\bjust\s+(?:showed|mentioned|said)\b|"
-    r"\b(?:compare|recompare)\s+(?:them|those|these|the\s+(?:two|three))\b|"
-    r"\bwhat\s+(?:about|did\s+you\s+say)\s+(?:those|that|the\s+(?:first|second|third|last))\b"
+    # Verbal anchors
+    r"\bjust\s+(?:showed|mentioned|said|told)\b|"
+    r"\b(?:compare|recompare)\s+(?:it|them|those|these|the\s+(?:two|three))\b|"
+    r"\bcompare\s+it\s+(?:to|with|against|and)\b|"
+    r"\bwhat\s+about\s+(?:it|that|this|those|the\s+(?:first|second|third|last|other))\b|"
+    r"\bwhat\s+did\s+you\s+say\s+(?:about|those|that|the\s+(?:first|second|third|last))\b|"
+    r"\bshow\s+(?:that|those|it)\s+(?:to\s+me|again)\b|"
+    r"\btell\s+me\s+(?:about\s+(?:it|that|those)|more)\b|"
+    # Confirmation / continuation — short affirmatives that only make sense
+    # against a prior offer. Anchored to start/end so they don't match inside
+    # longer queries that happen to contain "yes" as a word.
+    r"^\s*(?:yes|yeah|yep|ok|okay|sure|do\s+it|go\s+ahead|sounds\s+good|that\s+works)\s*[.!]?\s*$"
     r")",
     _coref_re.IGNORECASE,
 )
@@ -53,17 +64,49 @@ _PN_TOKEN_RE = _coref_re.compile(
     r"\b([A-Z]{1,5}[\d][\w\-/]{2,30}|[\d]{4,10})\b"
 )
 
+# Cached uppercase set of every Part_Number / Alt_Code / Supplier_Code in the
+# catalog. Lets us tell a real PN from a regex false-positive like MERV13,
+# ISO9001, 316SS, 2024, etc., when seeding the validator's known_pns from
+# history text. Keyed by id(df) so it transparently rebuilds when the
+# inventory refresh swaps state.df.
+_CATALOG_PN_CACHE: dict[int, set[str]] = {}
 
-def _collect_history_part_numbers(history: Optional[list]) -> set[str]:
-    """Extract every part number that appears in prior turns — both from the
-    structured `products` payloads attached to assistant turns AND from
-    regex-mining the rendered text. Used to seed the validator's known_pns
-    so legitimate prior-turn parts aren't flagged as hallucinations."""
+
+def _catalog_pn_set(df: pd.DataFrame) -> set[str]:
+    if df is None or df.empty:
+        return set()
+    cached = _CATALOG_PN_CACHE.get(id(df))
+    if cached is not None:
+        return cached
+    pns: set[str] = set()
+    for col in ("Part_Number", "Alt_Code", "Supplier_Code"):
+        if col in df.columns:
+            for v in df[col].dropna().astype(str):
+                v = v.strip().upper()
+                if v and v not in ("NAN", "NONE", "<NA>"):
+                    pns.add(v)
+    # Bound the cache — only keep the latest df fingerprint
+    _CATALOG_PN_CACHE.clear()
+    _CATALOG_PN_CACHE[id(df)] = pns
+    return pns
+
+
+def _collect_history_part_numbers(
+    history: Optional[list],
+    df: Optional[pd.DataFrame] = None,
+) -> set[str]:
+    """Extract every part number that appears in prior turns. Structured
+    `products` payloads from assistant turns are trusted unconditionally
+    (they came from real searches). Text-mined tokens are only included if
+    they exist in the catalog — this stops MERV13 / ISO9001 / 316SS / dates
+    from poisoning the validator's known_pns and letting a hallucination
+    sneak through."""
     found: set[str] = set()
     if not history:
         return found
+    catalog_pns = _catalog_pn_set(df) if df is not None else set()
     for msg in history:
-        # Structured products attached to assistant turns
+        # Structured products attached to assistant turns — always trusted
         prods = msg.get("products") if isinstance(msg, dict) else None
         if isinstance(prods, list):
             for p in prods:
@@ -73,12 +116,12 @@ def _collect_history_part_numbers(history: Optional[list]) -> set[str]:
                     val = p.get(key)
                     if val:
                         found.add(str(val).strip().upper())
-        # Text-mined PNs from message content
+        # Text-mined PNs — only added if they exist in the live catalog
         content = msg.get("content", "") if isinstance(msg, dict) else ""
-        if content:
+        if content and catalog_pns:
             for m in _PN_TOKEN_RE.finditer(content):
                 token = m.group(1).strip().upper()
-                if len(token) >= 4:
+                if len(token) >= 4 and token in catalog_pns:
                     found.add(token)
     return found
 
@@ -607,9 +650,12 @@ async def handle_message(
 
     # --- Coreference upgrade ---
     # If the user is referring to prior turns ("compare those", "the second one",
-    # "what about that part?") and we have history, the conversational answer
-    # lives in GPT with full context — not a fresh pandas lookup.
-    if history and _has_coreference(message) and intent in PANDAS_INTENTS:
+    # "what about that part?", "yes") and we have history, the conversational
+    # answer lives in GPT with full context — not a fresh pandas lookup or a
+    # canned scripted reply. Applies to PANDAS and SCRIPTED intents (so a
+    # bare "yes" confirming a prior offer doesn't get short-circuited into
+    # the QUOTE_READY canned response).
+    if history and _has_coreference(message) and intent in (PANDAS_INTENTS | SCRIPTED_INTENTS):
         logger.info(f"Coreference detected in '{message[:60]}' — upgrading {intent} → general (GPT with history)")
         return await _handle_gpt(message, "general", df, chemicals_df, history, advisory)
 
@@ -1179,7 +1225,9 @@ def _validate_response_parts(
             if alt:
                 known_pns.add(str(alt).upper().strip())
     # Union with PNs found in this user's prior conversation turns.
-    known_pns |= _collect_history_part_numbers(history)
+    # df is passed so text-mined PN tokens are intersected against the
+    # catalog (defends against MERV13/ISO9001-style false positives).
+    known_pns |= _collect_history_part_numbers(history, df=df)
 
     # Find part-number-like patterns in GPT response (alphanumeric with dashes/slashes)
     # Pattern: 2+ chars with mix of letters+digits, may have dashes/slashes

@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional, Sequence
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Conversation, session_factory
@@ -102,10 +103,19 @@ async def append_turn(
     handler — attached to the assistant turn so future coreference upgrades
     ("compare those two") can inject the real product records back into the
     GPT prompt instead of relying on rendered markdown alone.
+
+    Idempotency: append_message dedups via turn_hash read; UNIQUE INDEX
+    on turn_hash catches the race when two concurrent retries both pass
+    the read. We catch IntegrityError and silently roll back — losing
+    the duplicate row is the entire point.
     """
     await append_message(session, user_id, "user", user_message)
     await append_message(session, user_id, "assistant", assistant_message, products=products)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        logger.info(f"conversation_memory: race-dedup on commit (user={user_id})")
 
 
 async def get_recent_history(

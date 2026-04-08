@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.3.1",
+    version="2.4.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -394,19 +394,39 @@ async def chat_reset(request: Request):
 
 
 @app.post("/api/lookup")
-async def lookup(req: LookupRequest):
-    """Direct part number lookup — Pandas only, $0 cost."""
+async def lookup(request: Request, req: LookupRequest):
+    """Direct part number lookup — Pandas only, $0 cost.
+
+    History-aware: when the caller is logged in, the lookup is persisted
+    to the 7-day memory so a follow-up "compare those two" can find the
+    part the user just looked up via the modal.
+    """
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
+    user_id, _history = await _chat_auth_and_history(request)
     product = lookup_part(state.df, req.part_number)
+
     if product:
-        return {
+        result = {
             "found": True,
             "product": product,
             "quote_state": update_from_lookup(req.session_id, product),
         }
+        await _persist_turn(
+            user_id,
+            f"Lookup: {req.part_number}",
+            f"Found {req.part_number}: {product.get('Description', '')[:120]}",
+            products=[product],
+        )
+        return result
+
     update_from_message(req.session_id, req.part_number, state.df, intent="lookup")
+    await _persist_turn(
+        user_id,
+        f"Lookup: {req.part_number}",
+        f"No product found for '{req.part_number}'.",
+    )
     return {
         "found": False,
         "message": f"No product found for '{req.part_number}'.",
@@ -415,14 +435,29 @@ async def lookup(req: LookupRequest):
 
 
 @app.post("/api/search")
-async def search(req: SearchRequest):
-    """Search products by query — Pandas only, $0 cost."""
+async def search(request: Request, req: SearchRequest):
+    """Search products by query — Pandas only, $0 cost.
+
+    History-aware: persists the query and top result summary so the
+    user's modal-driven searches feed the conversational memory.
+    """
     if not state.data_loaded:
         return JSONResponse(status_code=503, content={"error": "Data not loaded."})
 
+    user_id, _history = await _chat_auth_and_history(request)
     result = search_products(state.df, req.query, field=req.field)
     update_from_message(req.session_id, req.query, state.df, intent="search")
     result["quote_state"] = update_from_search(req.session_id, req.query, result.get("results", []))
+
+    products = result.get("results") or []
+    total = result.get("total_found", len(products))
+    if products:
+        first = products[0] if isinstance(products[0], dict) else {}
+        first_pn = first.get("Part_Number") or first.get("Alt_Code") or "(unknown)"
+        summary = f"Search returned {total} results. Top: {first_pn}."
+    else:
+        summary = f"Search returned no matches for '{req.query}'."
+    await _persist_turn(user_id, f"Search: {req.query}", summary, products=products[:5])
     return result
 
 

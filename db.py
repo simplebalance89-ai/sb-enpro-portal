@@ -80,8 +80,11 @@ class Conversation(Base):
     # without having to re-parse rendered markdown out of `content`.
     products_json = Column(JSONB, nullable=True)
     # Idempotency hash: hash(user_id, role, content, minute_bucket). Lets us
-    # skip duplicate writes when a client retries within ~60s.
-    turn_hash = Column(String(64), nullable=True, index=True)
+    # skip duplicate writes when a client retries within ~60s. UNIQUE so the
+    # database enforces dedup even when the application's read-then-write
+    # check races (two concurrent retries both pass the lookup, both write,
+    # the loser gets IntegrityError and is silently dropped).
+    turn_hash = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (
@@ -119,8 +122,11 @@ async def init_db() -> bool:
             "ALTER TABLE conversations "
             "ADD COLUMN IF NOT EXISTS turn_hash VARCHAR(64)"
         ))
+        # UNIQUE constraint enforces idempotent writes at the DB layer.
+        # Use a unique index (instead of ALTER TABLE ADD CONSTRAINT) so
+        # IF NOT EXISTS works on every Postgres version Render runs.
         await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_conversations_turn_hash "
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_conversations_turn_hash "
             "ON conversations (turn_hash)"
         ))
 

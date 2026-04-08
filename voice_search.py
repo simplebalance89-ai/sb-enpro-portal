@@ -763,18 +763,24 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
             logger.info(f"Voice search — stripped non-existent part_number: {params['part_number']}")
             _had_fake_pn = True
             del params["part_number"]
-            # If nothing left after stripping, return not found
-            if not any(v for k, v in params.items() if v is not None):
-                return {
-                    "results": [],
-                    "total_found": 0,
-                    "transcript": transcript,
-                    "cleaned_transcript": cleaned,
-                    "search_type": "voice_part_not_found",
-                    "overall_confidence": 0.0,
-                    "suggestions": [],
-                    "filters_applied": [],
-                }
+            # PURITY: when the user explicitly asked for a specific part
+            # number that doesn't exist, do NOT substitute spec-based
+            # results — that's a hallucination by another name. Return
+            # empty + a clear "no such part" signal so the UI can ask
+            # the user to confirm the part number rather than handing
+            # them random products that happen to share a micron rating.
+            return {
+                "results": [],
+                "total_found": 0,
+                "transcript": transcript,
+                "cleaned_transcript": cleaned,
+                "search_type": "voice_part_not_found",
+                "overall_confidence": 0.0,
+                "suggestions": [],
+                "filters_applied": [],
+                "raw_params": params,
+                "fake_part_number": True,
+            }
 
     # Step 4: Fuzzy resolve
     resolved = resolve_parameters(params)
