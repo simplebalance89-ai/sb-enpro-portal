@@ -12,6 +12,7 @@ from typing import Optional
 import pandas as pd
 
 from azure_client import route_message, reason
+from config import settings
 from search import search_products, lookup_part, format_product, STOCK_LOCATIONS
 from governance import run_pre_checks, run_post_check, sanitize_response
 
@@ -354,7 +355,7 @@ Second paragraph — give them ONE specific product recommendation pulled from t
 
 - Only cite products from the [RELEVANT PRODUCTS FROM CATALOG] data attached to the user message.
 - Only cite application knowledge from the [KB SECTION CONTEXT] when present, and speak it plainly — never show section numbers, file names, or "KB" labels.
-- If you have no good catalog match for this customer, say so honestly: "I don't have a strong fit in catalog for that specific profile — I'd flag it to the office before the meeting (service@enproinc.com)."
+- If exact application tags are sparse (example: HVAC/data-center phrasing), recommend the closest in-catalog functional fits (media/form-factor/service-life) and state what to confirm in the meeting. Only hand off to office/engineering when safety constraints require it.
 - No numbered lists. No bullets. No "Customer Focus:", "Lead Product:", "Watch Out:" headers. Plain prose only — this is a phone-screen prep, not a deliverable.
 - Hard escalations (>400°F, >150 PSI, H2S, hydrogen, sub-0.2 micron, etc.) → tell the rep to loop in engineering before the meeting, not to recommend anything yourself.
 - Keep it to roughly 4–8 sentences total.
@@ -533,6 +534,8 @@ KB_SECTION_MAP = {
     "cip": ("8.1", "Culinary Steam + certifications", "3-A sanitary, 3-A 609-03"),
     "municipal": ("8.3", "Water Treatment & Municipal", "Ultipleat, Marksman — NSF 61 MANDATORY"),
     "water treatment": ("8.3", "Water Treatment & Municipal", "Ultipleat, Marksman — NSF 61 MANDATORY"),
+    "data center": ("12.1", "Data Center HVAC", "multi-pleat, extended surface, rigid cell, MERV 13"),
+    "hvac": ("12.1", "Data Center HVAC", "multi-pleat, extended surface, rigid cell, MERV 13"),
     "whisky": ("8.4", "Whisky Depth Filtration", "Seitz-K depth filters"),
     "spirits": ("8.4", "Whisky Depth Filtration", "Seitz-K depth filters"),
     "turbine": ("9.1", "Alliant Case Study", "Ultipleat HF, EPRI hold points"),
@@ -734,6 +737,11 @@ async def handle_message(
 
     if intent in GOVERNANCE_INTENTS:
         return await _handle_governance(message, intent)
+
+    # Compare should render through the conversational JSON path, not the
+    # legacy markdown table path.
+    if intent == "compare":
+        return await _handle_gpt(message, "compare", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
     if intent in PANDAS_INTENTS:
         return await _handle_pandas(message, intent, df)
@@ -1247,12 +1255,15 @@ async def _handle_gpt(
 
     # Search for relevant products to include as context
     # For pregame/application: search using KB-recommended products, not raw message
+    has_catalog_context = False
     search_query = message
     if intent in ("pregame", "application"):
         # Extract recommended product names from KB map
         msg_lower = message.lower()
+        kb_matched = False
         for keyword, (section, title, products) in KB_SECTION_MAP.items():
             if keyword in msg_lower:
+                kb_matched = True
                 # Search for the first recommended product name
                 product_names = [p.strip() for p in products.split(",")]
                 all_results = []
@@ -1263,7 +1274,8 @@ async def _handle_gpt(
                 if all_results:
                     products_context = json.dumps(all_results[:5], indent=2, default=str)
                     context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
-                search_query = None  # Skip the default search below
+                    has_catalog_context = True
+                    search_query = None  # Skip default search only when we already have context products
                 break
 
     # Coreference support — inject the most recent non-empty prior-turn
@@ -1318,6 +1330,33 @@ async def _handle_gpt(
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
+            has_catalog_context = True
+
+    # Pregame/application fallback: when exact phrasing is sparse (especially HVAC/data-center),
+    # broaden with function-oriented terms so GPT gets at least a few grounded options.
+    if intent in ("pregame", "application") and not has_catalog_context:
+        msg_lower = message.lower()
+        fallback_terms = []
+        if "data center" in msg_lower or "hvac" in msg_lower:
+            fallback_terms.extend(["merv", "pleat", "extended surface", "rigid"])
+        fallback_terms.extend(["filter", "cartridge"])
+
+        fallback_results = []
+        seen_pn = set()
+        for term in fallback_terms:
+            sr = search_products(df, term, max_results=3, in_stock_only=False)
+            for p in (sr.get("results") or []):
+                pn = str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper()
+                if not pn or pn in seen_pn:
+                    continue
+                seen_pn.add(pn)
+                fallback_results.append(p)
+            if len(fallback_results) >= 5:
+                break
+
+        if fallback_results:
+            products_context = json.dumps(fallback_results[:5], indent=2, default=str)
+            context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
 
     # Anti-hallucination guardrail — force GPT to only use provided data
     context_parts.append(
@@ -1367,6 +1406,26 @@ async def _handle_gpt(
         # On parse failure we fall through to legacy plain-text handling so
         # the user always gets *something* — never a 500.
         structured = _parse_structured_response(response, search_result.get("results", []))
+
+        # Optional model fallback: if primary reasoning answered but failed the
+        # required structured contract, retry once on fallback deployment.
+        fallback_deployment = settings.AZURE_DEPLOYMENT_REASONING_FALLBACK
+        if not structured and fallback_deployment and fallback_deployment != settings.AZURE_DEPLOYMENT_REASONING:
+            logger.warning(
+                f"Structured parse failed on primary ({settings.AZURE_DEPLOYMENT_REASONING}); "
+                f"retrying fallback ({fallback_deployment})"
+            )
+            fallback_response = await reason(
+                system_prompt,
+                messages,
+                deployment_override=fallback_deployment,
+            )
+            fallback_structured = _parse_structured_response(
+                fallback_response, search_result.get("results", [])
+            )
+            if fallback_structured:
+                response = fallback_response
+                structured = fallback_structured
 
         if structured:
             # Build the plain-text rendering for clients that don't render

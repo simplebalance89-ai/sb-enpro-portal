@@ -24,6 +24,7 @@ Set these in Render before first real test:
 - `AZURE_OPENAI_KEY`
 - `AZURE_DEPLOYMENT_ROUTER`
 - `AZURE_DEPLOYMENT_REASONING`
+- `AZURE_DEPLOYMENT_REASONING_FALLBACK` (optional but recommended)
 - `AZURE_BLOB_SAS`
 
 If voice STT uses separate Whisper resource, also set:

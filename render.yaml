@@ -30,6 +30,8 @@ services:
         sync: false
       - key: AZURE_DEPLOYMENT_REASONING
         sync: false
+      - key: AZURE_DEPLOYMENT_REASONING_FALLBACK
+        sync: false
       - key: AZURE_WHISPER_ENDPOINT
         sync: false
       - key: AZURE_WHISPER_KEY
