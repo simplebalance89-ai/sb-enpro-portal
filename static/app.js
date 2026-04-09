@@ -1217,6 +1217,16 @@
     // find the full product record. Falls through to the legacy card list
     // for any results that aren't in the recommendations payload.
     window.renderVoiceResponse = function (data) {
+        // V2.14.11 — voice rendering gets the same delivery treatment chat
+        // got in V2.14.7-9: cap visible cards at 2, kill "Other options"
+        // entirely, fade-in animation per card, smooth scroll, and a
+        // 250ms client-side stagger so the picks land paced instead of
+        // bunched. ZERO changes to voice_search.py / voice_gate.py /
+        // voice_echo.py — this is purely the frontend rendering layer.
+        // Voice backend pipeline stays exactly as Peter built it.
+        var MAX_VISIBLE_VOICE_PICKS = 2;
+        var STAGGER_MS = 250;
+
         var recs = (data && data.recommendations) || [];
         var results = (data && data.results) || [];
         var candidates = (data && data.candidates) || [];
@@ -1233,55 +1243,65 @@
             return null;
         }
 
-        var rendered = {};
+        // Build the cap-2 list of valid recs (each must resolve to a real product)
+        var visibleRecs = [];
+        for (var ri = 0; ri < recs.length && visibleRecs.length < MAX_VISIBLE_VOICE_PICKS; ri++) {
+            var r = recs[ri];
+            var rpn = (r.part_number || '').toString().trim().toUpperCase();
+            if (!rpn) continue;
+            var rprod = findProductByPN(rpn);
+            if (!rprod) continue;
+            visibleRecs.push({ rec: r, pn: rpn, product: rprod });
+        }
 
-        if (recs.length > 0) {
-            // Lead with conversational header
-            var lead = recs.length === 1 ? "Here's the strongest fit:" : "Here are the strongest fits:";
-            appendMessage('bot', lead);
+        // If we have NO valid recs at all, show top 1-2 results as fallback
+        // cards instead of dumping all of them. Same cap.
+        if (visibleRecs.length === 0 && results.length > 0) {
+            var fallbackTop = results.slice(0, MAX_VISIBLE_VOICE_PICKS);
+            appendMessage('bot', fallbackTop.length === 1 ? "Here's what I found:" : "Here are the strongest fits:");
+            fallbackTop.forEach(function (product, idx) {
+                setTimeout(function () {
+                    var cardHtml = '<div class="fm-fade-in">' + renderProductCard(product) + '</div>';
+                    appendCard(cardHtml);
+                    scrollToBottomSmooth();
+                }, idx * STAGGER_MS);
+            });
+            return;
+        }
 
-            // Render each recommendation as: reason callout + product card
-            recs.forEach(function (rec) {
-                var pn = (rec.part_number || '').toString().trim().toUpperCase();
-                if (!pn) return;
-                var product = findProductByPN(pn);
-                if (!product) return; // skip orphan recs
+        if (visibleRecs.length > 0) {
+            // Lead with conversational header (faded in for consistency)
+            var lead = visibleRecs.length === 1 ? "Here's the strongest fit:" : "Here are the strongest fits:";
+            appendMessage('bot', '<div class="fm-fade-in">' + esc(lead) + '</div>');
 
-                // Reason callout — soft-blue panel above the card
-                var reasonHtml =
-                    '<div class="fm-rec-reason" style="' +
-                    'background:#eef4ff;border-left:3px solid #0066CC;' +
-                    'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
-                    'font-size:14px;line-height:1.5;color:#0a1628;">' +
-                    esc(rec.reason || '') +
-                    '</div>';
-                appendMessage('bot', reasonHtml);
+            // Stagger each rec by STAGGER_MS so they land paced instead of bunched.
+            // Each rec = reason callout + faded product card.
+            visibleRecs.forEach(function (item, idx) {
+                setTimeout(function () {
+                    var reasonHtml =
+                        '<div class="fm-rec-reason fm-fade-in" style="' +
+                        'background:#eef4ff;border-left:3px solid #0066CC;' +
+                        'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
+                        'font-size:14px;line-height:1.5;color:#0a1628;">' +
+                        esc(item.rec.reason || '') +
+                        '</div>';
+                    appendMessage('bot', reasonHtml);
 
-                // Then the full product card
-                appendCard(renderProductCard(product));
-                rendered[pn] = true;
+                    var cardHtml = '<div class="fm-fade-in">' + renderProductCard(item.product) + '</div>';
+                    appendCard(cardHtml);
+                    scrollToBottomSmooth();
+                }, idx * STAGGER_MS);
             });
         }
 
-        // Show remaining results below as "more options" if there are any
-        // not already covered by recommendations.
-        var leftover = results.filter(function (p) {
-            var pn = (p.Part_Number || p.part_number || p.Alt_Code || '').toString().trim().toUpperCase();
-            return pn && !rendered[pn];
-        });
+        // V2.14.11 — KILL "Other options" leftover dump for voice. Same
+        // reason as chat: the leftover catalog rows the model didn't pick
+        // are by definition lower-ranked candidates. Rendering them as
+        // "Other options" doubles the visual noise and makes the response
+        // look like a wall of cards. If the rep wants more they can ask.
 
-        if (leftover.length > 0) {
-            if (recs.length > 0) {
-                appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
-            }
-            leftover.forEach(function (product) {
-                appendCard(renderProductCard(product));
-            });
-        }
-
-        // Edge case: no recs AND no leftover (shouldn't happen since caller
-        // guards on data.results.length > 0, but be defensive).
-        if (recs.length === 0 && leftover.length === 0) {
+        // Edge case: no recs AND no results — show fallback card
+        if (visibleRecs.length === 0 && results.length === 0) {
             appendCard(renderVoiceFallbackCard(data.transcript || '', data));
         }
     };
