@@ -1539,6 +1539,27 @@ async def _handle_gpt(
         }
     except Exception as e:
         logger.error(f"GPT reasoning failed: {e}")
+        # Resilience fallback: if reasoning is down, keep core workflows alive
+        # with deterministic Pandas/catalog behavior instead of hard-failing.
+        if intent == "compare":
+            try:
+                logger.warning("Falling back to deterministic compare path (Pandas) because reasoning is unavailable")
+                return await _handle_pandas(message, "compare", df)
+            except Exception as compare_err:
+                logger.error(f"Deterministic compare fallback also failed: {compare_err}")
+
+        if search_result.get("results"):
+            return {
+                "response": (
+                    _format_search_response(search_result)
+                    + "\n\n(Reasoning engine is temporarily unavailable. Showing direct catalog results.)"
+                ),
+                "intent": intent,
+                "cost": "$0",
+                "products": search_result.get("results", []),
+                "structured": False,
+            }
+
         return {
             "response": (
                 "I'm having trouble connecting to my reasoning engine right now. "
