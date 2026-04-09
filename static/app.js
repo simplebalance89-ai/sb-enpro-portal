@@ -493,12 +493,26 @@
     //
     // Returns {ok: true, summary: {intent, cost}} on success, or null/
     // {ok: false} on failure (caller falls back to the legacy fetch path).
+    // V2.14 — STREAM_V2 routes to /api/chat/stream-v2 (real token streaming
+    // via Azure OpenAI stream=True + json_object). Toggle to false for an
+    // instant client-side rollback to V2.11 perceived-streaming.
+    var STREAM_V2 = true;
+
+    // Module-level state for the live token bubble. Reset on every send.
+    var v2StreamingBubble = null;
+    var v2StreamingBuffer = '';
+
     async function sendMessageStreaming(text) {
         if (typeof TextDecoder === 'undefined' || !window.fetch) return null;
 
+        // Reset streaming bubble state for this turn
+        v2StreamingBubble = null;
+        v2StreamingBuffer = '';
+
+        var endpoint = STREAM_V2 ? '/api/chat/stream-v2' : '/api/chat/stream';
         var resp;
         try {
-            resp = await fetch(API_BASE + '/api/chat/stream', {
+            resp = await fetch(API_BASE + endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -582,6 +596,44 @@
                 scrollToBottom();
                 break;
 
+            case 'token':
+                // V2.14 — incremental token from Azure OpenAI stream. The model
+                // is producing JSON, so the visible "streaming bubble" shows the
+                // raw JSON building up character by character. The bubble gets
+                // REPLACED by the structured cards once the headline event lands
+                // at end-of-stream, so the user only sees the JSON for ~2-3
+                // seconds before it swaps to a clean answer. We use textContent
+                // (not innerHTML) to avoid XSS and to keep the JSON readable.
+                if (!data.text) break;
+                // Remove the skeleton on first token
+                if (window.__fmSkeletonShown) {
+                    var skelT = chatArea.querySelector('.fm-skeleton');
+                    if (skelT) {
+                        var skelWrapT = skelT.closest('.msg') || skelT.parentElement;
+                        if (skelWrapT) skelWrapT.remove();
+                    }
+                    window.__fmSkeletonShown = false;
+                }
+                // Lazy-create the bubble on first token
+                if (!v2StreamingBubble) {
+                    var wrapper = document.createElement('div');
+                    wrapper.className = 'msg bot fm-stream-v2-bubble';
+                    var bubbleEl = document.createElement('div');
+                    bubbleEl.className = 'msg-bubble';
+                    bubbleEl.style.cssText =
+                        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;' +
+                        'font-size:12px;color:#5a6573;white-space:pre-wrap;' +
+                        'background:#f6f7f9;border-radius:8px;padding:10px 12px;' +
+                        'max-height:160px;overflow:hidden;line-height:1.45;';
+                    wrapper.appendChild(bubbleEl);
+                    chatArea.appendChild(wrapper);
+                    v2StreamingBubble = bubbleEl;
+                }
+                v2StreamingBuffer += data.text;
+                v2StreamingBubble.textContent = v2StreamingBuffer;
+                scrollToBottom();
+                break;
+
             case 'headline':
                 // Remove the skeleton (if any) the moment real content lands
                 if (window.__fmSkeletonShown) {
@@ -591,6 +643,15 @@
                         if (msgWrapper) msgWrapper.remove();
                     }
                     window.__fmSkeletonShown = false;
+                }
+                // V2.14 — drop the live token bubble now that the structured
+                // answer is arriving. The user will see the clean cards instead
+                // of the raw JSON.
+                if (v2StreamingBubble) {
+                    var streamWrapper = v2StreamingBubble.closest('.fm-stream-v2-bubble') || v2StreamingBubble.parentElement;
+                    if (streamWrapper) streamWrapper.remove();
+                    v2StreamingBubble = null;
+                    v2StreamingBuffer = '';
                 }
                 if (data.text) {
                     appendMessage('bot',

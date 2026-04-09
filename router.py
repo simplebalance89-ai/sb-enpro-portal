@@ -11,7 +11,9 @@ from typing import Optional
 
 import pandas as pd
 
-from azure_client import route_message, reason
+from typing import AsyncIterator
+
+from azure_client import route_message, reason, reason_stream
 from search import search_products, lookup_part, format_product, STOCK_LOCATIONS
 from governance import run_pre_checks, run_post_check, sanitize_response
 
@@ -436,24 +438,12 @@ QUOTE_READY_RESPONSE = """Great — I'll put together a formal quote. To finaliz
 
 Once I have those details, I'll generate a formal quotation. Your Enpro rep will follow up within 1 business day."""
 
-HELP_RESPONSE = """Enpro Filtration Mastermind — Commands:
-
-1. lookup [part] — Search by part number, supplier code, or alt code
-2. price [part] — Pricing for a specific product
-3. compare [parts] — Side-by-side comparison
-4. manufacturer [name] — List products by manufacturer
-5. chemical [name] — Chemical compatibility with A/B/C/D ratings
-6. pregame [customer/industry] — Meeting prep with KB expertise
-7. application [problem] — Match problem to filtration solution
-8. system quote [specs] — Complete system quote
-9. quote ready — Selection form checklist
-10. demo — Full walkthrough with real data
-11. demo guided — Step-by-step interactive training
-12. mic drop — Complete workflow demonstration
-13. help — This command list
-14. reset — Clear context, fresh start
-
-Contact: service@enproinc.com | 1 (800) 323-2416"""
+HELP_RESPONSE = (
+    "I'm your filtration colleague — just ask me what you need in plain language. "
+    "Part numbers, customer prep, chemical compatibility, application questions, "
+    "compare two filters — talk to me like you would another rep. "
+    "If you ever get stuck: service@enproinc.com or 1 (800) 323-2416."
+)
 
 RESET_RESPONSE = "Context cleared. Fresh start. How can I help you with filtration?"
 
@@ -737,9 +727,20 @@ async def handle_message(
         return await _handle_gpt(message, "general", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
     # --- Route to handler ---
-    if intent in SCRIPTED_INTENTS:
+    # V2.14 — Andrew alignment: route EVERYTHING through the conversational
+    # GPT handler. The old PANDAS path returned raw "400 results" lists and
+    # the SCRIPTED help/quote_ready paths showed users a command menu — both
+    # of which Andrew flagged as "command-line database query tool, not an
+    # AI assistant." The conversational system prompt + catalog injection in
+    # _handle_gpt() handles every intent correctly: lookups become "here's
+    # the part you asked about with its specs," prices become conversational
+    # answers with stock context, helps become "I'm a filtration colleague,
+    # ask me anything," etc. Governance and reset stay scripted because
+    # they're guardrails, not user-facing answers.
+
+    if intent == "reset":
         return {
-            "response": SCRIPTED_RESPONSES[intent],
+            "response": SCRIPTED_RESPONSES["reset"],
             "intent": intent,
             "cost": "$0",
         }
@@ -747,18 +748,13 @@ async def handle_message(
     if intent in GOVERNANCE_INTENTS:
         return await _handle_governance(message, intent)
 
-    if intent in PANDAS_INTENTS:
-        return await _handle_pandas(message, intent, df)
-
-    if intent in GPT_INTENTS:
-        return await _handle_gpt(message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
-
-    # Fallback
-    return {
-        "response": "I'm not sure how to help with that. Try asking about a specific filter, part number, or application.",
-        "intent": "unknown",
-        "cost": "$0",
-    }
+    # All other intents — including the legacy PANDAS_INTENTS (lookup, price,
+    # compare, manufacturer, supplier), the legacy SCRIPTED help/quote_ready,
+    # and any unknown fallback — flow through the GPT conversational handler.
+    # _handle_gpt() injects catalog search results into context so part-number
+    # lookups still ground in real data, but the response shape is always
+    # conversational, mobile-scannable, and follows the system-prompt rules.
+    return await _handle_gpt(message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1431,6 +1427,353 @@ async def _handle_gpt(
             "cost": "$0",
             "error": str(e),
         }
+
+
+# ---------------------------------------------------------------------------
+# V2.14 — Streaming layer
+# ---------------------------------------------------------------------------
+#
+# _build_gpt_context() mirrors the context-assembly block of _handle_gpt()
+# (the chemical fast-path bypass, KB injection, prior-turn products, customer
+# intel, catalog search, anti-hallucination guardrail, history boundary). It
+# returns the (system_prompt, messages, search_result) tuple needed by both
+# the streaming and non-streaming reasoning paths. Kept as a separate helper
+# rather than refactoring _handle_gpt() so the legacy non-streaming path is
+# unchanged on this branch — V2.14 is a fresh parallel build.
+
+async def _build_gpt_context(
+    message: str,
+    intent: str,
+    df: pd.DataFrame,
+    chemicals_df: pd.DataFrame,
+    history: Optional[list],
+    advisory: Optional[str],
+    user_rep_id: Optional[str] = None,
+) -> tuple[str, list[dict], dict]:
+    """Build the (system_prompt, messages, search_result) tuple for a GPT call.
+
+    Mirrors _handle_gpt() context assembly. Used by both _handle_gpt_stream()
+    and (eventually) a refactored _handle_gpt() if/when we collapse the
+    duplication. Returns search_result so the caller can pass it through to
+    _parse_structured_response() and _validate_response_parts() at end-of-stream.
+    """
+    context_parts: list[str] = []
+
+    if advisory:
+        context_parts.append(f"[GOVERNANCE ADVISORY]: {advisory}")
+
+    if intent in ("pregame", "application"):
+        kb_context = _lookup_kb_section(message)
+        if kb_context:
+            context_parts.append(kb_context)
+
+    if intent in ("demo", "demo_guided", "mic_drop"):
+        demo_instructions = _get_demo_instructions(intent)
+        if demo_instructions:
+            context_parts.append(demo_instructions)
+
+    if intent == "chemical":
+        system_prompt = CHEMICAL_SYSTEM_PROMPT
+        if not chemicals_df.empty:
+            chem_info = _search_chemical_crosswalk(message, chemicals_df)
+            if chem_info:
+                context_parts.append(f"[CHEMICAL CROSSWALK DATA]:\n{chem_info}")
+    elif intent == "pregame":
+        system_prompt = PREGAME_SYSTEM_PROMPT
+    else:
+        system_prompt = REASONING_SYSTEM_PROMPT
+
+    # Search for relevant products. For pregame/application use KB-recommended
+    # product names; otherwise search the user's raw message.
+    search_query = message
+    if intent in ("pregame", "application"):
+        msg_lower = message.lower()
+        for keyword, (section, title, products) in KB_SECTION_MAP.items():
+            if keyword in msg_lower:
+                product_names = [p.strip() for p in products.split(",")]
+                all_results = []
+                for pname in product_names[:3]:
+                    sr = search_products(df, pname, max_results=2, in_stock_only=False)
+                    if sr.get("results"):
+                        all_results.extend(sr["results"])
+                if all_results:
+                    products_context = json.dumps(all_results[:5], indent=2, default=str)
+                    context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
+                search_query = None
+                break
+
+    # Coreference: prior-turn products as background reference (catalog wins)
+    prior_products = _most_recent_history_products(history)
+    if prior_products:
+        prior_json = json.dumps(prior_products[:5], indent=2, default=str)
+        context_parts.append(
+            f"[PRIOR TURN PRODUCTS — reference only, from this user's most recent search within the last hour]:\n{prior_json}\n"
+            "Use this ONLY if the user explicitly references prior turns ('that part', "
+            "'those filters', 'compare them', 'the second one'). For any new question, "
+            "PREFER the [RELEVANT PRODUCTS FROM CATALOG] block below."
+        )
+
+    # Customer intelligence layer (V2.12)
+    if user_rep_id:
+        try:
+            from customer_intel import (
+                get_rep_customer_index,
+                extract_customer_mention,
+                fetch_customer_intel,
+            )
+            customer_index = await get_rep_customer_index(user_rep_id)
+            mentioned = extract_customer_mention(message, customer_index)
+            if mentioned:
+                intel = await fetch_customer_intel(user_rep_id, mentioned["customer_id"])
+                if intel:
+                    intel_json = json.dumps(intel, indent=2, default=str)
+                    context_parts.append(
+                        f"[CUSTOMER CONTEXT — your relationship with {mentioned['customer_name']}]:\n"
+                        f"{intel_json}\n"
+                        "This is THIS rep's actual relationship history with this customer — "
+                        "their recent orders, active quotes, contact info, credit status. "
+                        "LEAD with what you know about them before answering the new question. "
+                        "Reference specific recent orders or open quotes by date and value when "
+                        "relevant. Don't recite the JSON — speak it like a colleague briefing them."
+                    )
+                    logger.info(f"customer_intel(stream): injected context for {mentioned['customer_name']} (rep {user_rep_id})")
+        except Exception as ci_err:
+            logger.error(f"customer_intel fetch failed (non-fatal): {ci_err}")
+
+    search_result: dict = {"results": []}
+    if search_query:
+        search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+        if search_result.get("results"):
+            products_context = json.dumps(search_result["results"], indent=2, default=str)
+            context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
+
+    # Anti-hallucination guardrail
+    context_parts.append(
+        "[CRITICAL DATA INTEGRITY RULE]\n"
+        "You MUST ONLY cite specs, part numbers, prices, stock levels, and manufacturers "
+        "that appear in the [RELEVANT PRODUCTS FROM CATALOG] section above.\n"
+        "If a spec (micron, temp, PSI, flow rate, media, price) is NOT in the catalog data provided, "
+        "say 'Not specified in catalog' — do NOT guess or invent values.\n"
+        "If no products were found in the catalog, say so. Do NOT fabricate part numbers.\n"
+        "NEVER round, estimate, or approximate specs. Use exact values from the data or say 'Contact Enpro.'"
+    )
+
+    # Build messages — history first, then a topic boundary, then the user message
+    messages: list[dict] = []
+    if history:
+        messages.extend(history[-10:])
+
+    boundary_note = ""
+    if history:
+        boundary_note = (
+            "[CONVERSATION CONTEXT] The messages above are this user's recent "
+            "conversation history (last 7 days). Use them ONLY to maintain "
+            "continuity if the user explicitly refers to prior turns "
+            "(e.g. 'that part', 'those filters', 'compare them'). Otherwise "
+            "treat the [USER MESSAGE] below as a new question and anchor your "
+            "answer to the [RELEVANT PRODUCTS FROM CATALOG] data attached to it, "
+            "NOT to products mentioned in earlier turns.\n\n"
+        )
+
+    user_content = message
+    if context_parts:
+        user_content = boundary_note + "\n\n".join(context_parts) + f"\n\n[USER MESSAGE]: {message}"
+    elif boundary_note:
+        user_content = boundary_note + f"[USER MESSAGE]: {message}"
+
+    messages.append({"role": "user", "content": user_content})
+
+    return system_prompt, messages, search_result
+
+
+async def _handle_gpt_stream(
+    message: str,
+    intent: str,
+    df: pd.DataFrame,
+    chemicals_df: pd.DataFrame,
+    history: Optional[list],
+    advisory: Optional[str],
+    user_rep_id: Optional[str] = None,
+) -> AsyncIterator[dict]:
+    """Streaming variant of _handle_gpt().
+
+    Yields events of two shapes:
+      {"type": "token", "text": "..."}        — incremental token deltas
+      {"type": "final", "result": {...}}      — final structured dict, same shape
+                                                  _handle_gpt() returns
+
+    The caller (server.py /api/chat/stream-v2) wraps these in SSE events.
+    Validation, anti-hallucination, and KB-reference stripping all run on the
+    full buffer at end-of-stream — same as _handle_gpt(), just deferred.
+    """
+    # Chemical fast-path: skip streaming entirely for direct chemical-on-PN
+    # queries; emit a single final event with the canned response.
+    if intent == "chemical":
+        chem_fast = _try_chemical_fast_path(message, df, chemicals_df)
+        if chem_fast:
+            yield {"type": "final", "result": chem_fast}
+            return
+
+    try:
+        system_prompt, messages, search_result = await _build_gpt_context(
+            message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id
+        )
+
+        buffer_parts: list[str] = []
+        async for delta in reason_stream(system_prompt, messages):
+            buffer_parts.append(delta)
+            yield {"type": "token", "text": delta}
+
+        full_text = "".join(buffer_parts).strip()
+
+        # Parse the buffer as the structured shape (same path _handle_gpt() uses)
+        structured = _parse_structured_response(full_text, search_result.get("results", []))
+
+        if structured:
+            plain = _structured_to_plain(structured)
+            plain = _validate_response_parts(
+                plain, search_result.get("results", []), df, history=history
+            )
+            plain = _strip_kb_references(plain)
+            yield {
+                "type": "final",
+                "result": {
+                    "response": plain,
+                    "headline": structured.get("headline"),
+                    "picks": structured.get("picks") or [],
+                    "follow_up": structured.get("follow_up"),
+                    "body": structured.get("body"),
+                    "intent": intent,
+                    "cost": "~$0.02",
+                    "products": search_result.get("results", []),
+                    "structured": True,
+                },
+            }
+            return
+
+        # Legacy plain-text fallback (model didn't return parseable JSON)
+        post_check = run_post_check(full_text)
+        if not post_check["valid"]:
+            logger.warning(f"Post-check issues (stream): {post_check['issues']}")
+            full_text = sanitize_response(full_text)
+
+        full_text = _validate_response_parts(
+            full_text, search_result.get("results", []), df, history=history
+        )
+        full_text = _strip_kb_references(full_text)
+
+        yield {
+            "type": "final",
+            "result": {
+                "response": full_text,
+                "intent": intent,
+                "cost": "~$0.02",
+                "products": search_result.get("results", []),
+                "structured": False,
+            },
+        }
+    except Exception as e:
+        logger.error(f"GPT stream reasoning failed: {e}", exc_info=True)
+        yield {
+            "type": "final",
+            "result": {
+                "response": (
+                    "I'm having trouble connecting to my reasoning engine right now. "
+                    "Try a direct part lookup, or contact Enpro directly for help."
+                ),
+                "intent": intent,
+                "cost": "$0",
+                "error": str(e),
+            },
+        }
+
+
+async def handle_message_stream(
+    message: str,
+    session_id: str,
+    mode: str,
+    df: pd.DataFrame,
+    chemicals_df: pd.DataFrame,
+    history: Optional[list] = None,
+    user_rep_id: Optional[str] = None,
+) -> AsyncIterator[dict]:
+    """Streaming variant of handle_message().
+
+    Mirrors the V2.14 routing collapse: governance/reset stay scripted (single
+    final event), everything else flows through _handle_gpt_stream() and yields
+    token deltas as they arrive. Yields the same {type: token|final} shape
+    _handle_gpt_stream() yields, plus a sentinel "ready" event at the start
+    so the frontend can clear its skeleton.
+    """
+    # --- Pre-checks (governance) ---
+    pre_check = run_pre_checks(message)
+    if pre_check and pre_check.get("intercepted"):
+        yield {
+            "type": "final",
+            "result": {
+                "response": pre_check["response"],
+                "intent": pre_check["check"],
+                "cost": "$0",
+                "governance": pre_check,
+            },
+        }
+        return
+
+    advisory = pre_check.get("advisory") if pre_check else None
+
+    # --- Ask John mode: skip classification, force KB reasoning ---
+    if mode == "ask_john":
+        logger.info(f"ASK JOHN mode (stream) | Message: {message[:80]}")
+        async for ev in _handle_gpt_stream(
+            message, "application", df, chemicals_df, history, advisory, user_rep_id=user_rep_id
+        ):
+            yield ev
+        return
+
+    # --- Customer mention upgrade (V2.12) ---
+    if user_rep_id:
+        try:
+            from customer_intel import get_rep_customer_index, extract_customer_mention
+            customer_index = await get_rep_customer_index(user_rep_id)
+            mentioned = extract_customer_mention(message, customer_index)
+            if mentioned:
+                logger.info(f"Customer mention (stream): {mentioned['customer_name']} (rep {user_rep_id})")
+                async for ev in _handle_gpt_stream(
+                    message, "general", df, chemicals_df, history, advisory, user_rep_id=user_rep_id
+                ):
+                    yield ev
+                return
+        except Exception as ci_err:
+            logger.error(f"customer mention check (stream) failed: {ci_err}")
+
+    # --- Intent classification ---
+    intent = await classify_intent(message)
+    logger.info(f"Intent (stream): {intent} | Message: {message[:80]}")
+
+    # --- V2.14 routing collapse ---
+    if intent == "reset":
+        yield {
+            "type": "final",
+            "result": {
+                "response": SCRIPTED_RESPONSES["reset"],
+                "intent": intent,
+                "cost": "$0",
+            },
+        }
+        return
+
+    if intent in GOVERNANCE_INTENTS:
+        gov = await _handle_governance(message, intent)
+        yield {"type": "final", "result": gov}
+        return
+
+    # Everything else streams through GPT (PANDAS_INTENTS, SCRIPTED help/quote_ready,
+    # GPT_INTENTS, and any unknown fallback). Same conversational system prompt,
+    # same catalog injection — just delivered token-by-token.
+    async for ev in _handle_gpt_stream(
+        message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id
+    ):
+        yield ev
 
 
 def _search_chemical_crosswalk(message: str, chemicals_df: pd.DataFrame) -> Optional[str]:

@@ -23,7 +23,7 @@ from slowapi.errors import RateLimitExceeded
 from config import settings
 from data_loader import load_static, load_inventory, load_chemicals, merge_data
 from search import search_products, lookup_part, suggest_parts
-from router import handle_message
+from router import handle_message, handle_message_stream
 from azure_client import health_check as azure_health_check, close_client
 from governance import run_pre_checks
 from quote_state import (
@@ -505,6 +505,156 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
         "quote_state": result.get("quote_state"),
         "structured": result.get("structured", False),
     })
+
+
+# ---------------------------------------------------------------------------
+# V2.14 — Real token streaming via Azure OpenAI stream=True + json_object
+# ---------------------------------------------------------------------------
+#
+# /api/chat/stream-v2 streams raw token deltas live from gpt-4o, then
+# emits a single "final" structured event at end-of-stream so the frontend
+# can swap from "live prose bubble" to "structured cards" cleanly. The
+# legacy /api/chat/stream and /api/chat endpoints stay untouched as
+# rollback paths. New endpoint, new client opt-in.
+
+async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
+    """
+    True streaming generator. Yields:
+      ready    — session is good, work is starting
+      token    — incremental token delta from Azure (emitted N times)
+      headline — final structured headline (one event)
+      body     — final structured body (optional)
+      pick     — final structured picks (one event each)
+      other    — leftover catalog products
+      follow_up — final follow-up question
+      done     — terminal event with intent/cost/quote_state
+      error    — emitted on any failure with detail string
+
+    The token events arrive live during model generation. The structured
+    events fire after [DONE] when the buffer is parsed. Frontend uses the
+    token events to paint a live "thinking out loud" bubble, then swaps
+    that bubble for the structured cards when headline arrives.
+    """
+    if not state.data_loaded:
+        yield _sse_event("error", {"error": "Data not loaded yet. Try again in a moment."})
+        return
+
+    user_id, user_rep_id, history = await _chat_auth_and_history(request)
+    if db_ready() and user_id is None:
+        yield _sse_event("error", {"error": "Not authenticated", "status": 401})
+        return
+
+    yield _sse_event("ready", {"ts": datetime.utcnow().isoformat()})
+
+    update_from_message(req.session_id, req.message, state.df)
+
+    # Run the streaming router. handle_message_stream() yields a sequence of
+    # {"type": "token", ...} events followed by exactly one {"type": "final", ...}
+    # event with the full structured result dict.
+    final_result: dict = {}
+    try:
+        async for ev in handle_message_stream(
+            message=req.message,
+            session_id=req.session_id,
+            mode=req.mode,
+            df=state.df,
+            chemicals_df=state.chemicals_df,
+            history=history or None,
+            user_rep_id=user_rep_id,
+        ):
+            if ev["type"] == "token":
+                yield _sse_event("token", {"text": ev["text"]})
+            elif ev["type"] == "final":
+                final_result = ev["result"]
+    except Exception as e:
+        logger.error(f"Stream-v2 chat error: {e}", exc_info=True)
+        yield _sse_event("error", {
+            "error": "Something went wrong. Try again or contact Enpro directly.",
+            "detail": str(e),
+        })
+        return
+
+    final_result["quote_state"] = snapshot_quote_state(req.session_id)
+
+    # Persist the turn (same Phase 3 logic as /api/chat)
+    await _persist_turn(
+        user_id,
+        req.message,
+        final_result.get("response", ""),
+        products=final_result.get("products"),
+    )
+
+    # Emit the structured layout events. The frontend will use the headline
+    # event as the cue to swap the live token bubble for the structured cards.
+    products_by_pn: dict = {}
+    for p in final_result.get("products") or []:
+        pn = (p.get("Part_Number") or p.get("Alt_Code") or p.get("part_number") or "")
+        if pn:
+            products_by_pn[str(pn).strip().upper()] = p
+
+    if final_result.get("structured") and final_result.get("headline"):
+        yield _sse_event("headline", {"text": final_result["headline"]})
+
+        if final_result.get("body"):
+            yield _sse_event("body", {"text": final_result["body"]})
+
+        rendered_pns: set = set()
+        for pick in (final_result.get("picks") or []):
+            pn = str(pick.get("part_number") or "").strip().upper()
+            product = products_by_pn.get(pn)
+            yield _sse_event("pick", {
+                "part_number": pn,
+                "reason": pick.get("reason", ""),
+                "product": product,
+            })
+            rendered_pns.add(pn)
+
+        leftover = [
+            p for p in (final_result.get("products") or [])
+            if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
+        ]
+        if leftover:
+            yield _sse_event("other", {"products": leftover[:3]})
+
+        if final_result.get("follow_up"):
+            yield _sse_event("follow_up", {"text": final_result["follow_up"]})
+    else:
+        # Legacy plain-text fallback (parser fell through). The token stream
+        # already painted the prose; just emit any products.
+        if not final_result.get("response"):
+            yield _sse_event("body", {"text": final_result.get("response", "")})
+        for p in (final_result.get("products") or [])[:5]:
+            yield _sse_event("other", {"products": [p]})
+
+    yield _sse_event("done", {
+        "intent": final_result.get("intent"),
+        "cost": final_result.get("cost"),
+        "quote_state": final_result.get("quote_state"),
+        "structured": final_result.get("structured", False),
+    })
+
+
+@app.post("/api/chat/stream-v2")
+@limiter.limit("20/minute")
+async def chat_stream_v2(request: Request, req: ChatRequest):
+    """
+    V2.14 — Real token streaming via Azure OpenAI stream=True + json_object.
+    Yields token deltas live during model generation, then a structured
+    final event sequence (headline/body/pick/other/follow_up/done) when
+    [DONE] arrives. Frontend opt-in via STREAM_V2 feature flag.
+
+    The legacy /api/chat/stream (V2.11 perceived-streaming) and /api/chat
+    (single JSON response) endpoints stay live as rollback paths.
+    """
+    return StreamingResponse(
+        _chat_stream_v2_generator(request, req),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.post("/api/chat/stream")

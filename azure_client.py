@@ -3,8 +3,9 @@ Enpro Filtration Mastermind Portal — Azure OpenAI Client
 Async wrapper for gpt-4.1-mini (router) and gpt-4.1 (reasoning) deployments.
 """
 
+import json
 import logging
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -31,10 +32,17 @@ def _get_headers() -> dict:
 
 
 async def get_client() -> httpx.AsyncClient:
-    """Get or create the shared async HTTP client."""
+    """Get or create the shared async HTTP client.
+
+    Uses an unbounded read timeout so streaming responses don't get killed
+    mid-stream by Azure pauses; non-streaming calls still set their own
+    timeout via the per-request post() call when needed.
+    """
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=30.0)
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(None, connect=10.0)
+        )
     return _client
 
 
@@ -122,6 +130,58 @@ async def reason(
         max_tokens=max_tokens,
     )
     return data["choices"][0]["message"]["content"].strip()
+
+
+async def reason_stream(
+    system_prompt: str,
+    messages: list[dict],
+    temperature: float = 0.3,
+    max_tokens: int = 2048,
+) -> AsyncIterator[str]:
+    """
+    Stream raw token deltas from the reasoning deployment (gpt-52-instant).
+
+    Yields incremental content strings as they arrive from Azure OpenAI.
+    Caller is responsible for buffering the full response and parsing it
+    as JSON at end-of-stream. Uses response_format=json_object so the
+    final concatenated buffer is guaranteed to be a syntactically valid
+    JSON object (verified V2.14 ground-truth test).
+    """
+    client = await get_client()
+    url = (
+        f"{_get_base_url()}/{settings.AZURE_DEPLOYMENT_REASONING}"
+        f"/chat/completions?api-version={settings.AZURE_OPENAI_API_VERSION}"
+    )
+    payload = {
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "temperature": temperature,
+        "max_completion_tokens": max_tokens,
+        "stream": True,
+        "response_format": {"type": "json_object"},
+    }
+
+    logger.debug(
+        f"Azure OpenAI stream: deployment={settings.AZURE_DEPLOYMENT_REASONING}, "
+        f"messages={len(messages)}"
+    )
+
+    async with client.stream(
+        "POST", url, headers=_get_headers(), json=payload
+    ) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                delta = chunk["choices"][0]["delta"].get("content", "")
+                if delta:
+                    yield delta
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
 
 
 async def health_check() -> dict:
