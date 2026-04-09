@@ -112,32 +112,67 @@ def invalidate_rep_customer_index(rep_id: Optional[str] = None) -> None:
 # Mention extraction — does this user message reference a customer this rep owns?
 # ---------------------------------------------------------------------------
 
+import re as _ci_re
+
+# Common English words and filtration terms that should NEVER trigger a
+# customer mention even if they happen to match a short customer name.
+# Prevents "the", "and", "filter", "PSI", etc. from false-firing.
+_CUSTOMER_BLOCKLIST = {
+    "AND", "THE", "FOR", "WITH", "FROM", "THIS", "THAT", "WHAT",
+    "WHEN", "WHERE", "WHICH", "WHO", "HOW", "WHY", "HAVE", "NEED",
+    "WANT", "HELP", "FIND", "LOOK", "SHOW", "TELL", "GIVE", "SEND",
+    "PSI", "PTFE", "PVDF", "EPDM", "BUNA", "OEM", "DOE", "FDA",
+    "CIP", "NSF", "SDS", "ISO", "GPM", "HVAC", "MEK",
+    "ACT", "AIR", "OIL", "GAS", "PVC", "SAE", "ANSI",
+}
+# NOTE: deliberately NOT blocking real manufacturer/customer names like
+# ADM, PALL, API — those CAN be customer names. Word-boundary match is
+# strict enough to prevent false fires inside longer words.
+
+
 def extract_customer_mention(message: str, customer_index: list[dict]) -> Optional[dict]:
     """
     Scan the user message for any customer name in this rep's book. Returns
-    the matched customer dict ({customer_id, customer_name, legal_name}) or
-    None. Conservative substring match — fuzzy matching is too noisy at
-    chat-turn frequency.
+    the matched customer dict or None.
 
-    Strategy: longest customer name first (so "ADM Decatur" wins over "ADM"),
-    case-insensitive substring search. Skips customer names shorter than 4
-    chars to avoid false positives on common short tokens.
+    Strategy:
+      - Long names (>=5 chars): substring match, longest-wins
+      - Short names (3-4 chars): require word-boundary match AND not in
+        the blocklist of common English/filtration tokens
+      - Names <3 chars: never match
     """
     if not message or not customer_index:
         return None
     msg_upper = message.upper()
-    candidates = []
+    msg_words = set(_ci_re.findall(r"\b[A-Z0-9&]+\b", msg_upper))
+
+    candidates: list[tuple[int, dict]] = []
     for c in customer_index:
         for name_field in ("customer_name", "legal_name"):
             name = (c.get(name_field) or "").strip()
-            if len(name) < 4:
+            name_upper = name.upper()
+            n = len(name)
+            if n < 3:
                 continue
-            if name.upper() in msg_upper:
-                candidates.append((len(name), c))
-                break  # don't double-count one customer for both name fields
+            matched = False
+            if n >= 5:
+                # Substring match for longer names
+                if name_upper in msg_upper:
+                    matched = True
+            else:
+                # Short names — require exact word match AND not in blocklist
+                if name_upper in _CUSTOMER_BLOCKLIST:
+                    continue
+                # Word-level match — must appear as its own token
+                # (handles "ADM" in "tell me about ADM" but NOT in "ADMin")
+                if name_upper in msg_words:
+                    matched = True
+            if matched:
+                candidates.append((n, c))
+                break  # don't double-count one customer
     if not candidates:
         return None
-    # Longest match wins
+    # Longest name wins (so "ADM Decatur" beats "ADM")
     candidates.sort(key=lambda x: x[0], reverse=True)
     return candidates[0][1]
 

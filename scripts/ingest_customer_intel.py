@@ -468,7 +468,135 @@ def main():
         sys.exit(1)
 
     import asyncio
+    import math
+    from datetime import date as _date
     from db import init_db, session_factory, CustomerMaster, CustomerTopPart, CustomerOrder, CustomerQuote
+
+    # Coerce DataFrame columns to the types Postgres expects BEFORE bulk insert.
+    # asyncpg is strict about NaN-vs-None and float-vs-string mismatches.
+
+    def _to_str(v):
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        # Floats that should be strings (terms_id, salesrep_owner come in as 15.0)
+        if isinstance(v, float):
+            return str(int(v)) if v.is_integer() else str(v)
+        return str(v)
+
+    def _to_int(v):
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
+    def _to_date(v):
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        if isinstance(v, _date):
+            return v
+        try:
+            return pd.Timestamp(v).date()
+        except (ValueError, TypeError):
+            return None
+
+    def _to_num(v):
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    def _clean_master(df: pd.DataFrame) -> list[dict]:
+        out = []
+        for row in df.to_dict(orient="records"):
+            out.append({
+                "rep_id": _to_str(row.get("rep_id")),
+                "customer_id": _to_int(row.get("customer_id")),
+                "customer_name": _to_str(row.get("customer_name")) or "",
+                "legal_name": _to_str(row.get("legal_name")),
+                "credit_status": _to_str(row.get("credit_status")),
+                "credit_limit": _to_num(row.get("credit_limit")),
+                "terms": _to_str(row.get("terms")),
+                "salesrep_owner": _to_str(row.get("salesrep_owner")),
+                "mail_city": _to_str(row.get("mail_city")),
+                "mail_state": _to_str(row.get("mail_state")),
+                "central_phone": _to_str(row.get("central_phone")),
+                "email_address": _to_str(row.get("email_address")),
+                "national_account": _to_str(row.get("national_account")),
+                "total_so_count": _to_int(row.get("total_so_count")),
+                "last_order_date": _to_date(row.get("last_order_date")),
+                "sfdc_account_id": _to_str(row.get("sfdc_account_id")),
+            })
+        return out
+
+    def _clean_parts(df: pd.DataFrame) -> list[dict]:
+        out = []
+        for row in df.to_dict(orient="records"):
+            out.append({
+                "rep_id": _to_str(row.get("rep_id")),
+                "customer_id": _to_int(row.get("customer_id")),
+                "inv_mast_uid": _to_int(row.get("inv_mast_uid")),
+                "customer_part_number": _to_str(row.get("customer_part_number")),
+                "part_description": _to_str(row.get("part_description")),
+                "total_qty": _to_num(row.get("total_qty")),
+                "total_extended_price": _to_num(row.get("total_extended_price")),
+                "order_count": _to_int(row.get("order_count")),
+                "last_ordered_date": _to_date(row.get("last_ordered_date")),
+            })
+        return out
+
+    def _clean_orders(df: pd.DataFrame) -> list[dict]:
+        out = []
+        for row in df.to_dict(orient="records"):
+            out.append({
+                "rep_id": _to_str(row.get("rep_id")),
+                "customer_id": _to_int(row.get("customer_id")),
+                "order_no": _to_str(row.get("order_no")),
+                "order_date": _to_date(row.get("order_date")),
+                "po_no": _to_str(row.get("po_no")),
+                "extended_price": _to_num(row.get("extended_price")),
+                "ship2_city": _to_str(row.get("ship2_city")),
+                "ship2_state": _to_str(row.get("ship2_state")),
+                "line_count": _to_int(row.get("line_count")),
+                "completed": _to_str(row.get("completed")),
+            })
+        return out
+
+    def _clean_quotes(df: pd.DataFrame) -> list[dict]:
+        out = []
+        for row in df.to_dict(orient="records"):
+            out.append({
+                "rep_id": _to_str(row.get("rep_id")),
+                "customer_id": _to_int(row.get("customer_id")),
+                "quote_number": _to_str(row.get("quote_number")),
+                "quote_name": _to_str(row.get("quote_name")),
+                "status": _to_str(row.get("status")),
+                "customer_name_raw": _to_str(row.get("customer_name_raw")),
+                "contact_name": _to_str(row.get("contact_name")),
+                "extended_price": _to_num(row.get("extended_price")),
+                "freight_terms": _to_str(row.get("freight_terms")),
+                "payment_terms": _to_str(row.get("payment_terms")),
+                "est_completion": _to_str(row.get("est_completion")),
+                "created_date": _to_date(row.get("created_date")),
+            })
+        return out
+
+    # Dedup the cleaned record lists in Python before sending. The dataframes
+    # already drop_duplicates upstream, but defense-in-depth catches anything
+    # that slipped through (e.g. duplicate keys from rep_to_customers fanout).
+    def _dedupe(records: list[dict], key_fields: tuple[str, ...]) -> list[dict]:
+        seen = set()
+        out = []
+        for r in records:
+            k = tuple(r.get(f) for f in key_fields)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(r)
+        return out
 
     async def write_all():
         if not await init_db():
@@ -476,23 +604,41 @@ def main():
             return
         factory = session_factory()
         async with factory() as session:
-            # Wipe + replace pattern (simple, idempotent for nightly refresh)
-            from sqlalchemy import delete
-            await session.execute(delete(CustomerQuote))
-            await session.execute(delete(CustomerOrder))
-            await session.execute(delete(CustomerTopPart))
-            await session.execute(delete(CustomerMaster))
+            from sqlalchemy import text as _text
+            # TRUNCATE is atomic, fast, and resets nothing we care about.
+            # CASCADE handles any FK refs (none yet but future-proof).
+            for tbl in ("customer_quotes", "customer_orders", "customer_top_parts", "customer_master"):
+                await session.execute(_text(f"TRUNCATE TABLE {tbl}"))
             await session.commit()
 
-            def _records(df: pd.DataFrame) -> list[dict]:
-                # Replace NaN with None for SQL compatibility
-                return df.where(pd.notnull(df), None).to_dict(orient="records")
+            master_records = _dedupe(_clean_master(cust_master), ("rep_id", "customer_id"))
+            parts_records = _dedupe(_clean_parts(top_parts), ("rep_id", "customer_id", "inv_mast_uid"))
+            orders_records = _dedupe(_clean_orders(cust_orders), ("rep_id", "customer_id", "order_no"))
+            quotes_records = _dedupe(_clean_quotes(cust_quotes), ("rep_id", "quote_number"))
 
-            await session.run_sync(lambda s: s.bulk_insert_mappings(CustomerMaster, _records(cust_master)))
-            await session.run_sync(lambda s: s.bulk_insert_mappings(CustomerTopPart, _records(top_parts)))
-            await session.run_sync(lambda s: s.bulk_insert_mappings(CustomerOrder, _records(cust_orders)))
-            await session.run_sync(lambda s: s.bulk_insert_mappings(CustomerQuote, _records(cust_quotes)))
-            await session.commit()
+            # Insert in batches via raw INSERT...ON CONFLICT DO NOTHING so
+            # any leftover dupes are silently skipped instead of aborting
+            # the whole load.
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            async def _bulk(model, records, batch=2000):
+                if not records:
+                    return
+                for i in range(0, len(records), batch):
+                    chunk = records[i:i + batch]
+                    stmt = pg_insert(model.__table__).values(chunk)
+                    stmt = stmt.on_conflict_do_nothing()
+                    await session.execute(stmt)
+                await session.commit()
+
+            logger.info(f"Inserting customer_master ({len(master_records):,})…")
+            await _bulk(CustomerMaster, master_records)
+            logger.info(f"Inserting customer_top_parts ({len(parts_records):,})…")
+            await _bulk(CustomerTopPart, parts_records)
+            logger.info(f"Inserting customer_orders ({len(orders_records):,})…")
+            await _bulk(CustomerOrder, orders_records)
+            logger.info(f"Inserting customer_quotes ({len(quotes_records):,})…")
+            await _bulk(CustomerQuote, quotes_records)
         logger.info("Write complete.")
 
     asyncio.run(write_all())

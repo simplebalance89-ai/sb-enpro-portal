@@ -692,6 +692,24 @@ async def handle_message(
         advisory = pre_check.get("advisory") if pre_check else None
         return await _handle_gpt(message, "application", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
 
+    # --- Customer mention upgrade (V2.12) ---
+    # If the user message mentions one of the logged-in rep's owned
+    # customers, route through GPT regardless of classified intent so the
+    # customer intel block can be injected. Without this, "tell me about ADM"
+    # gets classified as "manufacturer" and goes to _handle_pandas which
+    # never sees the customer context.
+    if user_rep_id:
+        try:
+            from customer_intel import get_rep_customer_index, extract_customer_mention
+            customer_index = await get_rep_customer_index(user_rep_id)
+            mentioned = extract_customer_mention(message, customer_index)
+            if mentioned:
+                logger.info(f"Customer mention detected: {mentioned['customer_name']} (rep {user_rep_id}) — upgrading to GPT")
+                advisory = pre_check.get("advisory") if pre_check else None
+                return await _handle_gpt(message, "general", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
+        except Exception as ci_err:
+            logger.error(f"customer mention check failed (non-fatal): {ci_err}")
+
     # --- Intent classification ---
     intent = await classify_intent(message)
     logger.info(f"Intent: {intent} | Message: {message[:80]}")
