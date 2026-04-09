@@ -317,6 +317,27 @@ def _search_cascade(df: pd.DataFrame, raw_query: str, norm_query: str) -> pd.Dat
         if not matches.empty:
             return matches
 
+        # Phase 4 (V2.14.4): cross-column ANY-word fallback. When the
+        # strict AND logic above fails, score each row by how many query
+        # words appear ANYWHERE in its combined searchable text and
+        # return any row that matches at least one. Catches the
+        # "HVAC filter" / "data center HVAC" class of bugs where the
+        # catalog has 428 HVAC products indexed by Application='HVAC'
+        # but the user's query also contains words ('filter',
+        # 'data center', 'meeting') that don't appear in the same row.
+        # Without this fallback, multi-word natural-language queries
+        # fall through to garbage. Results sorted by match count desc.
+        if len(words) > 1:
+            word_score = pd.Series([0] * len(df), index=df.index)
+            for word in words:
+                word_present = combined_text.str.contains(re.escape(word), na=False)
+                word_score = word_score + word_present.astype(int)
+            scored = df[word_score > 0].copy()
+            if not scored.empty:
+                scored["_v214_score"] = word_score[word_score > 0]
+                scored = scored.sort_values("_v214_score", ascending=False)
+                return scored.drop(columns=["_v214_score"])
+
     return pd.DataFrame()
 
 
