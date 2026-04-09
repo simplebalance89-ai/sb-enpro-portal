@@ -1842,7 +1842,25 @@ async def _multi_side_voice_search(message: str, df: pd.DataFrame) -> list[dict]
         except Exception as e:
             logger.warning(f"compare side voice_query failed for '{side}': {e}")
 
-        # Attempt 2: direct pandas filter (deterministic fallback)
+        # Attempt 2: V2.13 search_products path — restore the original
+        # behavior we deleted in V2.14.0. search_products has multi-column
+        # fuzzy matching that catches "Graver Technologies" when you search
+        # "Graver element hydraulic 10 micron". This is the path that
+        # worked for compare in V2.13.1 before the routing collapse killed
+        # it. Putting it back as the second attempt ensures any compare
+        # query that worked in V2.13 still works in V2.14.
+        if side_top is None:
+            try:
+                side_query_v13 = f"{side_clean} {shared_str}".strip()
+                sr_v13 = search_products(df, side_query_v13, max_results=5)
+                results_v13 = sr_v13.get("results") or []
+                if results_v13:
+                    side_top = results_v13[0]
+                    logger.info(f"compare side V2.13 search '{side_query_v13}' → {side_top.get('Part_Number')}")
+            except Exception as e:
+                logger.warning(f"compare side V2.13 search failed for '{side}': {e}")
+
+        # Attempt 3: direct pandas filter (deterministic fallback)
         if side_top is None:
             try:
                 mfg_col = "Final_Manufacturer" if "Final_Manufacturer" in df.columns else "Manufacturer"
