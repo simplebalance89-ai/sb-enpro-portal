@@ -564,6 +564,13 @@
     // visual chunk. The shared `summary` object accumulates terminal info
     // (intent, cost, quote_state) for the trackQuery call after stream end.
     function handleStreamEvent(eventName, data, summary) {
+        function looksLikeLegacyProductBlob(text) {
+            if (!text) return false;
+            var t = String(text);
+            return /1\.\s*Description:/i.test(t) &&
+                   /(?:Stock:|Final Manufacturer:|See compatible housings)/i.test(t);
+        }
+
         switch (eventName) {
             case 'ready':
                 // V2.13: paint a skeleton so the user sees IMMEDIATE feedback
@@ -603,6 +610,14 @@
 
             case 'body':
                 if (data.text) {
+                    // Legacy lookup/compare blob path: suppress the numbered dump
+                    // and prefer rendering product cards from subsequent "other"
+                    // events. If no product events arrive, we restore text at done.
+                    if (looksLikeLegacyProductBlob(data.text)) {
+                        summary.suppressedLegacyBody = true;
+                        summary.pendingLegacyBodyText = data.text;
+                        break;
+                    }
                     appendMessage('bot',
                         '<div style="font-size:14px;color:#444;line-height:1.5;">' +
                         formatMarkdown(data.text) + '</div>'
@@ -627,12 +642,24 @@
                 }
                 if (product) {
                     appendCard(renderProductCard(product));
+                    summary.renderedProductCount = (summary.renderedProductCount || 0) + 1;
                 }
                 scrollToBottom();
                 break;
 
             case 'other':
-                // Conversational mode: suppress trailing option dumps.
+                // Legacy non-structured stream path uses "other" events for
+                // product payloads. Render up to 3 cards to keep the response
+                // conversational and avoid massive dumps.
+                if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+                    var maxLegacyCards = 3;
+                    for (var i = 0; i < data.products.length; i++) {
+                        if ((summary.renderedProductCount || 0) >= maxLegacyCards) break;
+                        appendCard(renderProductCard(data.products[i]));
+                        summary.renderedProductCount = (summary.renderedProductCount || 0) + 1;
+                    }
+                    scrollToBottom();
+                }
                 break;
 
             case 'follow_up':
@@ -648,6 +675,15 @@
             case 'done':
                 summary.intent = data.intent;
                 summary.cost = data.cost;
+                if (summary.suppressedLegacyBody &&
+                    !(summary.renderedProductCount > 0) &&
+                    summary.pendingLegacyBodyText) {
+                    appendMessage('bot',
+                        '<div style="font-size:14px;color:#444;line-height:1.5;">' +
+                        formatMarkdown(summary.pendingLegacyBodyText) + '</div>'
+                    );
+                    scrollToBottom();
+                }
                 if (data.quote_state) {
                     syncQuoteState(data.quote_state);
                 }
