@@ -1793,32 +1793,108 @@ async def _multi_side_voice_search(message: str, df: pd.DataFrame) -> list[dict]
     if len(sides) < 2:
         return []
 
-    # Re-attach shared modifiers and run voice_query on each side
+    # Re-attach shared modifiers and run TWO independent searches per side:
+    #   1. voice_query via extract_parameters (gpt-4.1-mini path)
+    #   2. Direct pandas filter on Final_Manufacturer + Micron + product noun
+    # If EITHER returns a result, that side is resolved. The direct pandas
+    # filter is the deterministic fallback that doesn't rely on the LLM
+    # extractor returning the manufacturer correctly. Found via Peter's
+    # hint that the voice path returns Graver CMBF10-30NN cleanly when the
+    # query is straightforward, but the chat compare path was returning
+    # zero — meaning extract_parameters/voice_query was over-constraining
+    # somewhere (likely Micron exact-equals filter killing matches when
+    # the catalog stores Micron as a non-canonical numeric).
+    target_micron = None
+    if mic:
+        try:
+            target_micron = float(mic.group(1))
+        except ValueError:
+            target_micron = None
+
+    product_noun = None
+    for noun in _COMPARE_NOUNS:
+        if _coref_re.search(rf"\b{noun}\b", clean, flags=_coref_re.IGNORECASE):
+            product_noun = noun.rstrip("s")
+            break
+
     shared_str = " ".join(shared)
     picks: list[dict] = []
     seen_pns: set[str] = set()
+
     for side in sides[:5]:
-        side_query = f"{side} {shared_str}".strip()
-        try:
-            extracted = await _voice_extract_parameters(side_query)
-            if not extracted:
-                continue
-            resolved = _voice_resolve_parameters(extracted)
-            vr = _voice_query(df, resolved)
-            results = vr.get("results") or []
-            if results:
-                top = results[0]
-                pn = str(top.get("Part_Number") or top.get("Alt_Code") or "").upper()
-                if pn and pn not in seen_pns:
-                    picks.append(top)
-                    seen_pns.add(pn)
-                    logger.info(f"compare side '{side_query}' → {pn}")
-        except Exception as e:
-            logger.warning(f"compare side voice extraction failed for '{side_query}': {e}")
+        side_clean = side.strip()
+        if not side_clean:
             continue
 
-    # Need at least 2 sides resolved for compare to be meaningful
-    return picks if len(picks) >= 2 else []
+        side_top: Optional[dict] = None
+
+        # Attempt 1: voice_query via gpt-4.1-mini extract
+        try:
+            side_query = f"{side_clean} {shared_str}".strip()
+            extracted = await _voice_extract_parameters(side_query)
+            if extracted:
+                resolved = _voice_resolve_parameters(extracted)
+                vr = _voice_query(df, resolved)
+                results = vr.get("results") or []
+                if results:
+                    side_top = results[0]
+                    logger.info(f"compare side voice_query '{side_query}' → {side_top.get('Part_Number')}")
+        except Exception as e:
+            logger.warning(f"compare side voice_query failed for '{side}': {e}")
+
+        # Attempt 2: direct pandas filter (deterministic fallback)
+        if side_top is None:
+            try:
+                mfg_col = "Final_Manufacturer" if "Final_Manufacturer" in df.columns else "Manufacturer"
+                if mfg_col not in df.columns:
+                    continue
+                mask = df[mfg_col].astype(str).str.contains(
+                    _coref_re.escape(side_clean), case=False, na=False
+                )
+                # Apply product noun filter via Description / Product_Type
+                if product_noun and "Product_Type" in df.columns:
+                    desc_mask = df["Product_Type"].astype(str).str.contains(
+                        _coref_re.escape(product_noun), case=False, na=False
+                    )
+                    if "Description" in df.columns:
+                        desc_mask = desc_mask | df["Description"].astype(str).str.contains(
+                            _coref_re.escape(product_noun), case=False, na=False
+                        )
+                    mask = mask & desc_mask
+                # Apply micron filter — use a tolerance window because the
+                # catalog stores Micron as text/float that may not exact-equal
+                if target_micron is not None and "Micron" in df.columns:
+                    micron_col = pd.to_numeric(df["Micron"], errors="coerce")
+                    # ±0.5 micron window catches "10", "10.0", "9.9", "10.5"
+                    micron_mask = (micron_col >= target_micron - 0.5) & (micron_col <= target_micron + 0.5)
+                    mask = mask & micron_mask
+                # Prefer in-stock results
+                filtered = df[mask]
+                if not filtered.empty and "Total_Stock" in filtered.columns:
+                    in_stock = filtered[pd.to_numeric(filtered["Total_Stock"], errors="coerce").fillna(0) > 0]
+                    if not in_stock.empty:
+                        filtered = in_stock
+                if not filtered.empty:
+                    from search import format_product
+                    side_top = format_product(filtered.iloc[0])
+                    logger.info(f"compare side direct-pandas '{side_clean}' → {side_top.get('Part_Number')}")
+            except Exception as e:
+                logger.warning(f"compare side direct-pandas failed for '{side}': {e}")
+
+        if side_top is not None:
+            pn = str(side_top.get("Part_Number") or side_top.get("Alt_Code") or "").upper()
+            if pn and pn not in seen_pns:
+                picks.append(side_top)
+                seen_pns.add(pn)
+
+    # V2.14.12 — return whatever sides resolved, even if just one. The
+    # `>= 2 picks` gate was killing single-side wins (Pall found, Graver
+    # missing) and falling through to the single-query voice extractor
+    # which then ALSO only returned Pall, producing the false "Graver
+    # not in catalog" answer. Now if only one side resolves, we still
+    # inject it into the GPT context and the model honestly says
+    # "found Pall, didn't find Graver, contact office for Graver."
+    return picks
 
 
 async def _handle_gpt_stream(
