@@ -632,13 +632,7 @@
                 break;
 
             case 'other':
-                if (data.products && data.products.length > 0) {
-                    appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
-                    data.products.forEach(function (p) {
-                        appendCard(renderProductCard(p));
-                    });
-                    scrollToBottom();
-                }
+                // Conversational mode: suppress trailing option dumps.
                 break;
 
             case 'follow_up':
@@ -1095,7 +1089,7 @@
     // instead of data.results + data.candidates (voice).
     window.renderStructuredChatResponse = function (data) {
         var headline = data.headline || '';
-        var picks = data.picks || [];
+        var picks = (data.picks || []).slice(0, 3);
         var followUp = data.follow_up || '';
         var body = data.body || '';
         var products = data.products || [];
@@ -1151,20 +1145,7 @@
             }
         });
 
-        // 4. Show any catalog products NOT covered by picks below as
-        //    "Other options" — gives the rep more to scan if they want it.
-        var leftover = products.filter(function (p) {
-            var pn = (p.Part_Number || p.part_number || p.Alt_Code || '').toString().trim().toUpperCase();
-            return pn && !rendered[pn];
-        });
-        if (leftover.length > 0 && picks.length > 0) {
-            appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
-            leftover.slice(0, 3).forEach(function (product) {
-                appendCard(renderProductCard(product));
-            });
-        }
-
-        // 5. Follow-up question — italicized, conversational
+        // 4. Follow-up question — italicized, conversational
         if (followUp) {
             appendMessage('bot',
                 '<div style="font-style:italic;color:#444;font-size:14px;margin-top:8px;">' +
@@ -1180,7 +1161,7 @@
     // find the full product record. Falls through to the legacy card list
     // for any results that aren't in the recommendations payload.
     window.renderVoiceResponse = function (data) {
-        var recs = (data && data.recommendations) || [];
+        var recs = ((data && data.recommendations) || []).slice(0, 3);
         var results = (data && data.results) || [];
         var candidates = (data && data.candidates) || [];
         var pool = results.concat(candidates); // matched-by-PN lookup pool
@@ -1226,25 +1207,9 @@
             });
         }
 
-        // Show remaining results below as "more options" if there are any
-        // not already covered by recommendations.
-        var leftover = results.filter(function (p) {
-            var pn = (p.Part_Number || p.part_number || p.Alt_Code || '').toString().trim().toUpperCase();
-            return pn && !rendered[pn];
-        });
-
-        if (leftover.length > 0) {
-            if (recs.length > 0) {
-                appendMessage('bot', '<span style="color:#666;font-size:13px;">Other options:</span>');
-            }
-            leftover.forEach(function (product) {
-                appendCard(renderProductCard(product));
-            });
-        }
-
-        // Edge case: no recs AND no leftover (shouldn't happen since caller
+        // Edge case: no recommendations (shouldn't happen since caller
         // guards on data.results.length > 0, but be defensive).
-        if (recs.length === 0 && leftover.length === 0) {
+        if (recs.length === 0) {
             appendCard(renderVoiceFallbackCard(data.transcript || '', data));
         }
     };
@@ -3850,60 +3815,10 @@
         inStockOnly: false
     };
     
-    // Check for voice commands (trigger modals, send, hang up, toggles)
+    // Legacy hook kept for compatibility; conversational mode does not
+    // intercept voice transcripts into command/menu flows.
     function checkVoiceCommands(transcript) {
-        var lower = transcript.toLowerCase().trim();
-        
-        // Modal triggers
-        if (/^(look up|lookup)\s+(part|part number)/.test(lower)) {
-            showModal('lookup');
-            return true;
-        }
-        if (/^customer\s+(pre game|pregame|pre-game)/.test(lower)) {
-            showModal('pregame');
-            return true;
-        }
-        if (/^compare\s+(parts|products)/.test(lower)) {
-            openCompareSelector();
-            return true;
-        }
-
-        
-        // Filter toggles
-        if (/^(in stock|only in stock|show in stock)$/.test(lower)) {
-            appendMessage('bot', '<em>Filter set: In Stock only</em>');
-            return true;
-        }
-        if (/^(all stock|show all|any stock)$/.test(lower)) {
-            appendMessage('bot', '<em>Filter set: All products</em>');
-            return true;
-        }
-        
-        // Send command - works like clicking the send button
-        if (/^send$|^send it$|^submit$/.test(lower)) {
-            stopListening(); // Stop mic first
-            var input = document.getElementById('userInput');
-            if (input && input.value.trim()) {
-                var text = input.value.trim();
-                input.value = '';
-                // Small delay to let mic stop
-                setTimeout(function() {
-                    sendMessage(text);
-                }, 100);
-            }
-            return true;
-        }
-        
-        // Hang up - cancels mic, clears input, no message sent
-        if (/^hang up$|^cancel$|^clear$|^never mind$|^nevermind$/.test(lower)) {
-            stopListening(); // Stop mic immediately
-            var input = document.getElementById('userInput');
-            if (input) input.value = '';
-            // Don't show any message, just silently cancel
-            return true;
-        }
-        
-        return false; // Not a command, process normally
+        return false;
     }
 
     // Single-flight guard for voice transcription requests. Without this,
@@ -3988,12 +3903,7 @@
                     if (data.transcript) {
                         appendMessage('bot', '<em>I heard: "' + esc(data.transcript) + '"</em>');
                         
-                        // Check for voice commands
-                        var voiceCmd = checkVoiceCommands(data.transcript);
-                        if (voiceCmd) {
-                            // Command handled, stop processing
-                            return;
-                        }
+                        // Conversational mode: don't intercept transcript as command.
                     }
 
                     // Show confidence suggestions only when we are at/above the 90% gate.

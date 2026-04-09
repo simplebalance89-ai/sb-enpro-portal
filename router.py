@@ -436,24 +436,12 @@ QUOTE_READY_RESPONSE = """Great — I'll put together a formal quote. To finaliz
 
 Once I have those details, I'll generate a formal quotation. Your Enpro rep will follow up within 1 business day."""
 
-HELP_RESPONSE = """Enpro Filtration Mastermind — Commands:
-
-1. lookup [part] — Search by part number, supplier code, or alt code
-2. price [part] — Pricing for a specific product
-3. compare [parts] — Side-by-side comparison
-4. manufacturer [name] — List products by manufacturer
-5. chemical [name] — Chemical compatibility with A/B/C/D ratings
-6. pregame [customer/industry] — Meeting prep with KB expertise
-7. application [problem] — Match problem to filtration solution
-8. system quote [specs] — Complete system quote
-9. quote ready — Selection form checklist
-10. demo — Full walkthrough with real data
-11. demo guided — Step-by-step interactive training
-12. mic drop — Complete workflow demonstration
-13. help — This command list
-14. reset — Clear context, fresh start
-
-Contact: service@enproinc.com | 1 (800) 323-2416"""
+HELP_RESPONSE = (
+    "I'm your filtration colleague — ask naturally and I'll handle the intent. "
+    "I can help with part lookups, customer pregame prep, comparisons, chemical compatibility, "
+    "application guidance, and quote-ready next steps. "
+    "If we need office backup: service@enproinc.com or 1 (800) 323-2416."
+)
 
 RESET_RESPONSE = "Context cleared. Fresh start. How can I help you with filtration?"
 

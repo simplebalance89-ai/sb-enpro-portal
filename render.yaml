@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: enpro-fm-portal-v215-staging
+    runtime: docker
+    repo: https://github.com/simplebalance89-ai/sb-enpro-portal
+    branch: v2.15-rebuild-from-2.13
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: HOST
+        value: 0.0.0.0
+      - key: SESSION_SECRET
+        sync: false
+      - key: GLOBAL_PIN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: enpro-fm-portal-db
+          property: connectionString
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_KEY
+        sync: false
+      - key: AZURE_OPENAI_API_VERSION
+        value: 2024-12-01-preview
+      - key: AZURE_DEPLOYMENT_ROUTER
+        sync: false
+      - key: AZURE_DEPLOYMENT_REASONING
+        sync: false
+      - key: AZURE_WHISPER_ENDPOINT
+        sync: false
+      - key: AZURE_WHISPER_KEY
+        sync: false
+      - key: AZURE_WHISPER_DEPLOYMENT
+        value: whisper
+      - key: AZURE_WHISPER_API_VERSION
+        value: 2024-12-01-preview
+      - key: AZURE_BLOB_SAS
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: REPORT_EMAIL
+        sync: false
+
+databases:
+  - name: enpro-fm-portal-db
+    plan: starter
