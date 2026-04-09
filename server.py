@@ -552,6 +552,8 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
     # {"type": "token", ...} events followed by exactly one {"type": "final", ...}
     # event with the full structured result dict.
     final_result: dict = {}
+    live_picks_emitted: set = set()
+    live_headline_emitted = False
     try:
         async for ev in handle_message_stream(
             message=req.message,
@@ -562,9 +564,30 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
             history=history or None,
             user_rep_id=user_rep_id,
         ):
-            if ev["type"] == "token":
+            etype = ev["type"]
+            if etype == "token":
                 yield _sse_event("token", {"text": ev["text"]})
-            elif ev["type"] == "final":
+            elif etype == "headline":
+                # V2.14.3 — headline arrives mid-stream as soon as the
+                # value is complete in the JSON buffer. Frontend uses this
+                # to swap the live token bubble for the final layout.
+                live_headline_emitted = True
+                yield _sse_event("headline", {"text": ev["text"]})
+            elif etype == "pick_partial":
+                # V2.14.3 — pick fires the moment its closing brace lands
+                # in the buffer. Frontend renders a card immediately.
+                # Multiple cards paint in parallel as the model produces
+                # them. THIS is the parallel-card UX the JSON+streaming
+                # migration was supposed to enable.
+                pn = str(ev["pick"].get("part_number") or "").strip().upper()
+                if pn and pn not in live_picks_emitted:
+                    live_picks_emitted.add(pn)
+                    yield _sse_event("pick", {
+                        "part_number": pn,
+                        "reason": ev["pick"].get("reason", ""),
+                        "product": ev.get("product"),
+                    })
+            elif etype == "final":
                 final_result = ev["result"]
     except Exception as e:
         logger.error(f"Stream-v2 chat error: {e}", exc_info=True)
@@ -593,15 +616,19 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
             products_by_pn[str(pn).strip().upper()] = p
 
     if final_result.get("structured") and final_result.get("headline"):
-        yield _sse_event("headline", {"text": final_result["headline"]})
+        # V2.14.3 — only emit headline if we didn't already during streaming
+        if not live_headline_emitted:
+            yield _sse_event("headline", {"text": final_result["headline"]})
 
         if final_result.get("body"):
             yield _sse_event("body", {"text": final_result["body"]})
 
         picks_list = final_result.get("picks") or []
-        rendered_pns: set = set()
+        rendered_pns: set = set(live_picks_emitted)  # don't re-emit live picks
         for pick in picks_list:
             pn = str(pick.get("part_number") or "").strip().upper()
+            if pn in rendered_pns:
+                continue
             product = products_by_pn.get(pn)
             yield _sse_event("pick", {
                 "part_number": pn,

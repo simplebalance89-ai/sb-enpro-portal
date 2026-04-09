@@ -1631,6 +1631,11 @@ async def _build_gpt_context(
     return system_prompt, messages, search_result
 
 
+_PICK_OBJECT_RE = _coref_re.compile(
+    r'\{\s*"part_number"\s*:\s*"([^"]+)"\s*,\s*"reason"\s*:\s*"([^"]*)"\s*\}'
+)
+
+
 async def _handle_gpt_stream(
     message: str,
     intent: str,
@@ -1642,14 +1647,24 @@ async def _handle_gpt_stream(
 ) -> AsyncIterator[dict]:
     """Streaming variant of _handle_gpt().
 
-    Yields events of two shapes:
-      {"type": "token", "text": "..."}        — incremental token deltas
-      {"type": "final", "result": {...}}      — final structured dict, same shape
-                                                  _handle_gpt() returns
+    V2.14.3 — emits pick_partial events the moment each pick object closes
+    in the buffer, BEFORE the full response finishes streaming. This is
+    what makes the frontend show multiple product cards filling in live in
+    parallel — the actual point of the JSON+streaming migration.
 
-    The caller (server.py /api/chat/stream-v2) wraps these in SSE events.
-    Validation, anti-hallucination, and KB-reference stripping all run on the
-    full buffer at end-of-stream — same as _handle_gpt(), just deferred.
+    Yields events of these shapes:
+      {"type": "token", "text": "..."}            — incremental token delta
+      {"type": "headline", "text": "..."}         — first time a complete
+                                                    headline string appears
+                                                    in the buffer
+      {"type": "pick_partial", "pick": {...}, "product": {...}}
+                                                  — emitted the moment a
+                                                    complete pick object
+                                                    closes in the buffer
+      {"type": "final", "result": {...}}          — final structured dict
+                                                    after [DONE] + parse +
+                                                    validation, same shape
+                                                    _handle_gpt() returns
     """
     # Chemical fast-path: skip streaming entirely for direct chemical-on-PN
     # queries; emit a single final event with the canned response.
@@ -1664,10 +1679,50 @@ async def _handle_gpt_stream(
             message, intent, df, chemicals_df, history, advisory, user_rep_id=user_rep_id
         )
 
+        # Build a part-number → product lookup so pick_partial events can
+        # carry the full product card data without an extra search.
+        products_by_pn: dict = {}
+        for p in search_result.get("results", []):
+            pn = (p.get("Part_Number") or p.get("Alt_Code") or p.get("part_number") or "")
+            if pn:
+                products_by_pn[str(pn).strip().upper()] = p
+
         buffer_parts: list[str] = []
+        emitted_pick_pns: set[str] = set()
+        emitted_headline = False
+
         async for delta in reason_stream(system_prompt, messages):
             buffer_parts.append(delta)
             yield {"type": "token", "text": delta}
+
+            # Incremental parse — scan the buffer for newly-complete pick
+            # objects and headline. This is what enables parallel card
+            # rendering on the frontend.
+            current = "".join(buffer_parts)
+
+            # Headline first — fires once, the moment the complete headline
+            # value appears in the buffer.
+            if not emitted_headline:
+                hl_match = _coref_re.search(r'"headline"\s*:\s*"([^"]+)"', current)
+                if hl_match:
+                    emitted_headline = True
+                    yield {"type": "headline", "text": hl_match.group(1)}
+
+            # Picks — fire each one the moment its closing brace lands.
+            for m in _PICK_OBJECT_RE.finditer(current):
+                pn = m.group(1).strip().upper()
+                if pn in emitted_pick_pns:
+                    continue
+                emitted_pick_pns.add(pn)
+                product = products_by_pn.get(pn)
+                yield {
+                    "type": "pick_partial",
+                    "pick": {
+                        "part_number": pn,
+                        "reason": m.group(2),
+                    },
+                    "product": product,
+                }
 
         full_text = "".join(buffer_parts).strip()
 
