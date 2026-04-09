@@ -637,30 +637,35 @@
                 break;
 
             case 'pick':
-                // V2.14.8 — INLINE structured rendering. The reason bubble
-                // IS the answer. Part number + manufacturer + micron + media
-                // + price + stock all rendered in ONE scannable line. NO
-                // giant 9-row product card below it. A salesperson on a
-                // phone reads two lines for a 2-pick compare instead of
-                // scrolling through two full-screen cards. THIS is what
-                // the JSON migration was actually for: structured fields
-                // collapsed into readable inline text, not fanned out into
-                // a table per pick. The model's "reason" string is already
-                // the canonical one-line answer; we just give it a clean
-                // bubble and stop dumping the product card alongside it.
+                // V2.14.9 — cards restored, delivery fixed. The cards
+                // themselves are GOOD (organized, scannable, structured)
+                // — what was broken was the delivery: all cards landing
+                // at once with the screen jumping to bottom. Now each
+                // pick fades + slides in smoothly with a soft scroll
+                // instead of a snap, and the server staggers pick events
+                // by 200ms so they arrive paced, not bunched.
                 var pn = (data.part_number || '').toString().toUpperCase();
                 var reason = data.reason || '';
+                var product = data.product;
                 if (pn) {
                     appendMessage('bot',
-                        '<div class="fm-pick-inline" style="' +
+                        '<div class="fm-pick-reason fm-fade-in" style="' +
                         'background:#eef4ff;border-left:3px solid #0066CC;' +
-                        'padding:10px 14px;margin:6px 0;border-radius:8px;' +
+                        'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
                         'font-size:14px;line-height:1.5;color:#0a1628;">' +
                         '<strong>' + esc(pn) + '</strong> — ' + esc(reason) +
                         '</div>'
                     );
                 }
-                scrollToBottom();
+                if (product) {
+                    // Wrap the product card in a fade-in container so it
+                    // lands smoothly. CSS keyframes are injected once below.
+                    var cardHtml = '<div class="fm-fade-in">' + renderProductCard(product) + '</div>';
+                    appendCard(cardHtml);
+                }
+                // Smooth scroll instead of jump — page glides to follow
+                // the new content instead of snapping.
+                scrollToBottomSmooth();
                 break;
 
             case 'other':
@@ -2379,6 +2384,39 @@
             chatArea.scrollTop = chatArea.scrollHeight;
         });
     }
+
+    // V2.14.9 — smooth scroll variant for streaming pick rendering. The
+    // page glides to the new content instead of snapping. Falls back to
+    // instant scroll on browsers that don't support behavior:smooth.
+    function scrollToBottomSmooth() {
+        requestAnimationFrame(function () {
+            try {
+                chatArea.scrollTo({
+                    top: chatArea.scrollHeight,
+                    behavior: 'smooth'
+                });
+            } catch (_) {
+                chatArea.scrollTop = chatArea.scrollHeight;
+            }
+        });
+    }
+
+    // V2.14.9 — inject the fade-in keyframes once at module init. Used
+    // by streaming pick cards to land smoothly instead of pop-in.
+    (function injectFadeInCss() {
+        if (document.getElementById('fm-fade-in-style')) return;
+        var style = document.createElement('style');
+        style.id = 'fm-fade-in-style';
+        style.textContent =
+            '@keyframes fm-fade-in {' +
+            '  from { opacity: 0; transform: translateY(8px); }' +
+            '  to   { opacity: 1; transform: translateY(0); }' +
+            '}' +
+            '.fm-fade-in {' +
+            '  animation: fm-fade-in 0.35s ease-out both;' +
+            '}';
+        document.head.appendChild(style);
+    })();
 
     // ── Clear welcome ──
     function clearWelcome() {

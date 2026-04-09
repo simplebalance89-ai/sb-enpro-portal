@@ -577,12 +577,19 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
                 # V2.14.3 — pick fires the moment its closing brace lands
                 # in the buffer. Frontend renders a card immediately.
                 # V2.14.7 — capped at 2 to keep the mobile chat UI clean.
-                # The model can produce up to 3 picks per the system
-                # prompt; we only paint the top 2 to the user.
+                # V2.14.9 — small async stagger between pick events so
+                # they don't bunch at the end of the model stream. The
+                # model finishes the JSON in ~3 seconds, so without a
+                # stagger the last few picks land back-to-back and feel
+                # like a dump even though the architecture is correct.
+                # 250ms gives the user time to see each card land before
+                # the next one arrives, smooth pacing instead of slam.
                 if len(live_picks_emitted) >= 2:
                     continue
                 pn = str(ev["pick"].get("part_number") or "").strip().upper()
                 if pn and pn not in live_picks_emitted:
+                    if live_picks_emitted:
+                        await asyncio.sleep(0.25)
                     live_picks_emitted.add(pn)
                     yield _sse_event("pick", {
                         "part_number": pn,
