@@ -598,8 +598,9 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
         if final_result.get("body"):
             yield _sse_event("body", {"text": final_result["body"]})
 
+        picks_list = final_result.get("picks") or []
         rendered_pns: set = set()
-        for pick in (final_result.get("picks") or []):
+        for pick in picks_list:
             pn = str(pick.get("part_number") or "").strip().upper()
             product = products_by_pn.get(pn)
             yield _sse_event("pick", {
@@ -609,22 +610,32 @@ async def _chat_stream_v2_generator(request: Request, req: ChatRequest):
             })
             rendered_pns.add(pn)
 
-        leftover = [
-            p for p in (final_result.get("products") or [])
-            if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
-        ]
-        if leftover:
-            yield _sse_event("other", {"products": leftover[:3]})
+        # V2.14.2 — only emit "other" leftover cards if the model actually
+        # committed to picks. If picks == [] (model said "I don't have a
+        # strong fit, contact the office"), all remaining catalog results
+        # are by definition the rejected fuzzy matches the model already
+        # considered and turned down. Rendering them anyway as "Other
+        # options" undermines the bounded-confidence answer and shipped
+        # cases like a Duravalve return-shipping box appearing as a
+        # "filter recommendation" for a data-center HVAC query.
+        if picks_list:
+            leftover = [
+                p for p in (final_result.get("products") or [])
+                if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
+            ]
+            if leftover:
+                yield _sse_event("other", {"products": leftover[:3]})
 
         if final_result.get("follow_up"):
             yield _sse_event("follow_up", {"text": final_result["follow_up"]})
     else:
         # Legacy plain-text fallback (parser fell through). The token stream
-        # already painted the prose; just emit any products.
+        # already painted the prose. Don't emit additional product cards
+        # here — the parser-fall-through case is already a degraded path,
+        # and rendering catalog search results without the model's
+        # endorsement risks the same Duravalve-box leak.
         if not final_result.get("response"):
             yield _sse_event("body", {"text": final_result.get("response", "")})
-        for p in (final_result.get("products") or [])[:5]:
-            yield _sse_event("other", {"products": [p]})
 
     yield _sse_event("done", {
         "intent": final_result.get("intent"),
