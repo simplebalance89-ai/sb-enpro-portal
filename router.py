@@ -22,6 +22,7 @@ from voice_search import (
     extract_parameters as _voice_extract_parameters,
     resolve_parameters as _voice_resolve_parameters,
     voice_query as _voice_query,
+    voice_search_pipeline as _voice_search_pipeline,
 )
 from search import search_products, lookup_part, format_product, STOCK_LOCATIONS
 from governance import run_pre_checks, run_post_check, sanitize_response
@@ -1625,34 +1626,38 @@ async def _build_gpt_context(
             search_result = {"results": direct_hits[:5]}
         else:
             # Fast path 2a — compare-aware multi-side voice extraction.
-            # V2.14.6: lifted from the V2.13 _handle_pandas compare branch
-            # but routes each per-side query through the voice extractor
-            # instead of fuzzy search_products. For "compare 10 micron Pall
-            # and Graver hydraulic elements" → splits to ["Pall hydraulic
-            # 10 micron element", "Graver hydraulic 10 micron element"] →
-            # voice_query each side → real Pall pick + real Graver pick.
+            # Detects "compare X and Y" queries and runs voice's pipeline
+            # per side so each manufacturer gets its own catalog query.
             compare_results = await _multi_side_voice_search(search_query, df)
             if compare_results:
                 search_result = {"results": compare_results}
-                logger.info(f"compare-aware voice extractor: {len(compare_results)} sides resolved")
+                logger.info(f"compare-aware: {len(compare_results)} sides resolved")
 
-            # Fast path 2b — single-query voice extractor pipeline
+            # Fast path 2b — V2.14.15: call voice_search_pipeline DIRECTLY
+            # instead of recreating its extract→resolve→query→fallback
+            # logic. Voice's pipeline has preprocess_transcript + part-number
+            # fast path + extract_parameters fallback to search_products if
+            # the LLM returns nothing + fake part-number stripping + final
+            # search_products fallback if voice_query returns empty. My
+            # V2.14.5-13 attempts to recreate this all had bugs because I
+            # was reimplementing voice's logic instead of calling it. Now
+            # chat shares the EXACT same code path voice uses — if voice
+            # finds Koch HVAC parts for "I'm meeting with a data center
+            # operator..." then chat will too because they're literally
+            # running the same function on the same input.
             if not search_result.get("results"):
                 try:
-                    extracted = await _voice_extract_parameters(search_query)
-                    if extracted:
-                        resolved = _voice_resolve_parameters(extracted)
-                        voice_result = _voice_query(df, resolved)
-                        if voice_result.get("results"):
-                            search_result = voice_result
-                            logger.info(
-                                f"voice extractor (chat): {len(voice_result['results'])} hits "
-                                f"via filters {voice_result.get('filters_applied', [])}"
-                            )
+                    voice_result = await _voice_search_pipeline(search_query, df)
+                    if voice_result.get("results"):
+                        search_result = voice_result
+                        logger.info(
+                            f"voice_search_pipeline (chat): {len(voice_result['results'])} hits "
+                            f"via {voice_result.get('search_type', 'unknown')}"
+                        )
                 except Exception as ve:
-                    logger.warning(f"voice extractor failed for chat query (non-fatal): {ve}")
+                    logger.warning(f"voice_search_pipeline failed for chat query (non-fatal): {ve}")
 
-            # Fallback — old fuzzy search_products with Phase 4 OR-fallback
+            # Final fallback — direct search_products with Phase 4 OR
             if not search_result.get("results"):
                 search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
 
