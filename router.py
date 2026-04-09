@@ -916,9 +916,12 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
         # If we STILL don't have at least 2 products, fall through to GPT with
         # the catalog data so the model can attempt the comparison conversationally
         # instead of returning the broken "Only found 1 product" error message.
+        # _handle_pandas doesn't have chemicals_df in scope so pass an empty
+        # dataframe — the GPT path only uses chemicals_df for chemical intent.
         if len(products) < 2:
             logger.info(f"compare path returned {len(products)} products — falling through to GPT")
-            return await _handle_gpt(message, "general", df, chemicals_df, history=None, advisory=None)
+            import pandas as _pd
+            return await _handle_gpt(message, "general", df, _pd.DataFrame(), history=None, advisory=None)
         if len(products) >= 2:
             # Build side-by-side comparison table
             spec_keys = ["Description", "Product_Type", "Final_Manufacturer", "Micron", "Media", "Max_Temp_F", "Max_PSI", "Flow_Rate", "Efficiency", "Price"]
