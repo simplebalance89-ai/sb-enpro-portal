@@ -1483,9 +1483,32 @@ async def _build_gpt_context(
     else:
         system_prompt = REASONING_SYSTEM_PROMPT
 
-    # Search for relevant products. For pregame/application use KB-recommended
-    # product names; otherwise search the user's raw message.
+    # V2.14 — Strip command-word prefixes from the catalog search query.
+    # The legacy _handle_pandas() did this inline before searching, but the
+    # routing collapse moved everything through _build_gpt_context() so the
+    # cleanup has to happen here too. Without it, queries like "look up clr"
+    # get passed to search_products as-is, the noise words drown out the
+    # match, and the anti-hallucination guardrail correctly tells the model
+    # "no products found" — producing the false-negative "CLR isn't in the
+    # catalog" response that ships nothing useful to the user.
+    _command_prefixes = (
+        "look up ", "lookup ", "look-up ", "look at ",
+        "find ", "find me ", "search for ", "search ",
+        "show me ", "get me ", "give me ",
+        "i need ", "i want ", "i'm looking for ", "looking for ",
+        "do you have ", "do you carry ", "any ",
+        "price ", "price on ", "price for ", "how much is ", "how much ",
+        "compare ", "compare the ",
+        "what is ", "what's ", "what are ",
+        "tell me about ", "tell me ",
+    )
+    ql = message.lower().strip()
     search_query = message
+    for pfx in _command_prefixes:
+        if ql.startswith(pfx):
+            search_query = message.strip()[len(pfx):].strip()
+            break
+
     if intent in ("pregame", "application"):
         msg_lower = message.lower()
         for keyword, (section, title, products) in KB_SECTION_MAP.items():
@@ -1540,9 +1563,31 @@ async def _build_gpt_context(
         except Exception as ci_err:
             logger.error(f"customer_intel fetch failed (non-fatal): {ci_err}")
 
+    # Direct token lookup FIRST — catches part numbers buried in conversational
+    # language (e.g. "look up CLR130", "do you have HC9600 in stock"). Iterates
+    # the cleaned query tokens; any token that's a valid part-number / alt-code
+    # / supplier-code in the catalog gets injected as a direct hit. Falls back
+    # to fuzzy search_products() only if no direct hits were found. This is
+    # the V2.14 replacement for the dead _handle_pandas lookup branch.
     search_result: dict = {"results": []}
     if search_query:
-        search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+        direct_hits: list = []
+        seen_pns: set = set()
+        for raw_tok in search_query.split():
+            tok = raw_tok.strip(",.?!()[]{}\"'")
+            # Skip pure connector words (too short OR no digits AND too short)
+            if len(tok) < 3:
+                continue
+            product = lookup_part(df, tok)
+            if product:
+                pn = str(product.get("Part_Number") or product.get("Alt_Code") or "").upper()
+                if pn and pn not in seen_pns:
+                    direct_hits.append(product)
+                    seen_pns.add(pn)
+        if direct_hits:
+            search_result = {"results": direct_hits[:5]}
+        else:
+            search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
