@@ -284,6 +284,36 @@ def _canonicalize_part_number(raw: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
 
 
+def _extract_explicit_part_phrase(text: str) -> Optional[str]:
+    """
+    Extract likely part token from explicit phrasing:
+    - "part number CLR 510"
+    - "look up part CLR-510"
+    - "pn C L R 5 1 0"
+    """
+    if not text:
+        return None
+    lower = str(text).lower()
+    # Capture text after explicit markers up to punctuation boundary.
+    m = re.search(r"\b(?:part\s*number|part\s*#|pn|part)\b[:\s-]*(.+?)(?:[.,;!?]|$)", lower)
+    if not m:
+        return None
+    tail = m.group(1).strip()
+    if not tail:
+        return None
+
+    # Keep only first few "code-like" chunks to avoid swallowing full sentences.
+    chunks = re.findall(r"[a-z0-9]+", tail)
+    if not chunks:
+        return None
+    candidate = "".join(chunks[:6])  # enough for spaced letters/digits
+    pn = _canonicalize_part_number(candidate)
+    # Require a mixed or code-like token length to avoid false positives.
+    if len(pn) >= 4 and any(c.isdigit() for c in pn):
+        return pn
+    return None
+
+
 def detect_part_number(text: str) -> Optional[str]:
     """Detect part number patterns in transcript.
 
@@ -310,6 +340,11 @@ def detect_part_number(text: str) -> Optional[str]:
         pn = _canonicalize_part_number(split_match.group(1) + split_match.group(2))
         if pn:
             return pn
+
+    # 3) Explicit phrase fallback (part number / pn / part)
+    explicit = _extract_explicit_part_phrase(text)
+    if explicit:
+        return explicit
 
     return None
 

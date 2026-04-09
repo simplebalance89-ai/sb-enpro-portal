@@ -901,6 +901,20 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
                 if found:
                     products.append(found)
                 else:
+                    # Deterministic PN shorthand rescue:
+                    # "HC9020" should resolve to "HC9020FCN4Z" when present.
+                    try:
+                        from search import suggest_parts as _suggest_parts
+                        starts = _suggest_parts(df, part_query, max_results=3, mode="starts_with")
+                    except Exception:
+                        starts = []
+                    if starts:
+                        cand_pn = str(starts[0].get("Part_Number") or "").strip()
+                        if cand_pn:
+                            resolved = lookup_part(df, cand_pn)
+                            if resolved:
+                                products.append(resolved)
+                                continue
                     sr = search_products(df, part_query, max_results=5)
                     if sr.get("results"):
                         products.append(sr["results"][0])
