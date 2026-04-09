@@ -886,8 +886,24 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
     # Step 2: Fast path — direct part number detection
     part_num = detect_part_number(cleaned)
     if part_num:
-        from search import lookup_part
+        from search import lookup_part, suggest_parts
         product = lookup_part(df, part_num)
+        # Deterministic rescue for spoken/truncated part numbers.
+        # Example: "CLR 510" / "CLR510" should resolve to "CLR510/T1210000000".
+        if not product:
+            try:
+                starts = suggest_parts(df, part_num, max_results=3, mode="starts_with")
+            except Exception:
+                starts = []
+            for cand in starts:
+                cand_pn = str(cand.get("Part_Number") or "").strip()
+                if not cand_pn:
+                    continue
+                resolved = lookup_part(df, cand_pn)
+                if resolved:
+                    product = resolved
+                    part_num = cand_pn
+                    break
         if product:
             return {
                 "results": [product],
@@ -901,28 +917,27 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
             }
         # Part number detected but not found — don't fall back to text search
         # (prevents hallucinations where "FAKE12345" matches random products)
-        if len(cleaned.split()) <= 2:
-            near = _near_part_matches(df, part_num, max_results=3)
-            recs = [
-                {
-                    "part_number": str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper(),
-                    "reason": "Closest catalog part-number match."
-                }
-                for p in near
-                if (p.get("Part_Number") or p.get("Alt_Code"))
-            ]
-            return {
-                "results": near,
-                "total_found": len(near),
-                "transcript": transcript,
-                "cleaned_transcript": cleaned,
-                "search_type": "voice_part_near_match" if near else "voice_part_not_found",
-                "overall_confidence": 0.35 if near else 0.0,
-                "suggestions": [],
-                "filters_applied": [f"part_number={part_num}(not_found)"],
-                "recommendations": recs,
-                "not_found_part_number": part_num,
+        near = _near_part_matches(df, part_num, max_results=3)
+        recs = [
+            {
+                "part_number": str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper(),
+                "reason": "Closest catalog part-number match."
             }
+            for p in near
+            if (p.get("Part_Number") or p.get("Alt_Code"))
+        ]
+        return {
+            "results": near,
+            "total_found": len(near),
+            "transcript": transcript,
+            "cleaned_transcript": cleaned,
+            "search_type": "voice_part_near_match" if near else "voice_part_not_found",
+            "overall_confidence": 0.35 if near else 0.0,
+            "suggestions": [],
+            "filters_applied": [f"part_number={part_num}(not_found)"],
+            "recommendations": recs,
+            "not_found_part_number": part_num,
+        }
 
     # Step 3: Extract parameters
     params = await extract_parameters(cleaned)
