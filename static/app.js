@@ -637,21 +637,28 @@
                 break;
 
             case 'pick':
+                // V2.14.8 — INLINE structured rendering. The reason bubble
+                // IS the answer. Part number + manufacturer + micron + media
+                // + price + stock all rendered in ONE scannable line. NO
+                // giant 9-row product card below it. A salesperson on a
+                // phone reads two lines for a 2-pick compare instead of
+                // scrolling through two full-screen cards. THIS is what
+                // the JSON migration was actually for: structured fields
+                // collapsed into readable inline text, not fanned out into
+                // a table per pick. The model's "reason" string is already
+                // the canonical one-line answer; we just give it a clean
+                // bubble and stop dumping the product card alongside it.
                 var pn = (data.part_number || '').toString().toUpperCase();
                 var reason = data.reason || '';
-                var product = data.product;
                 if (pn) {
                     appendMessage('bot',
-                        '<div class="fm-rec-reason" style="' +
+                        '<div class="fm-pick-inline" style="' +
                         'background:#eef4ff;border-left:3px solid #0066CC;' +
-                        'padding:10px 14px;margin:6px 0 0 0;border-radius:6px 6px 0 0;' +
+                        'padding:10px 14px;margin:6px 0;border-radius:8px;' +
                         'font-size:14px;line-height:1.5;color:#0a1628;">' +
                         '<strong>' + esc(pn) + '</strong> — ' + esc(reason) +
                         '</div>'
                     );
-                }
-                if (product) {
-                    appendCard(renderProductCard(product));
                 }
                 scrollToBottom();
                 break;
