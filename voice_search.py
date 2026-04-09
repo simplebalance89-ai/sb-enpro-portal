@@ -279,19 +279,38 @@ def preprocess_transcript(text: str) -> str:
     return lower
 
 
+def _canonicalize_part_number(raw: str) -> str:
+    """Normalize a part-like token for catalog lookup (alnum only, uppercase)."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
+
+
 def detect_part_number(text: str) -> Optional[str]:
-    """Detect part number patterns in transcript."""
-    # Common patterns: CLR510, AB-1234-56, 12345-6789, alphanumeric codes
+    """Detect part number patterns in transcript.
+
+    Handles both compact forms (CLR510, HC9021FAS4Z) and spoken split forms
+    like "CLR 510" that often come from STT.
+    """
+    # 1) Compact code-like patterns
     patterns = [
-        r'\b[A-Z]{2,5}\d{3,}[A-Z0-9]*\b',  # CLR510, ABC1234
-        r'\b\d{4,}-\d{3,}\b',                # 12345-6789
-        r'\b[A-Z]{1,3}-\d{3,}-\d+\b',        # AB-1234-56
-        r'\b\d{6,}\b',                        # 123456 (6+ digits alone)
+        r"\b[A-Z]{2,5}\d{3,}[A-Z0-9]*\b",   # CLR510, HC9021FAS4Z
+        r"\b\d{4,}-\d{3,}\b",               # 12345-6789
+        r"\b[A-Z]{1,3}-\d{3,}-\d+\b",       # AB-1234-56
+        r"\b\d{6,}\b",                      # 123456 (6+ digits alone)
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(0)
+            pn = _canonicalize_part_number(match.group(0))
+            if pn:
+                return pn
+
+    # 2) Spoken split form: "CLR 510" -> CLR510
+    split_match = re.search(r"\b([A-Z]{2,5})\s+(\d{2,}[A-Z0-9]*)\b", text, re.IGNORECASE)
+    if split_match:
+        pn = _canonicalize_part_number(split_match.group(1) + split_match.group(2))
+        if pn:
+            return pn
+
     return None
 
 
