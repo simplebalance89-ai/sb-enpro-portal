@@ -1179,6 +1179,7 @@ def _parse_structured_response(raw: str, provided_products: list) -> Optional[di
     # Filter picks: drop any pick whose part_number isn't in the catalog
     raw_picks = parsed.get("picks") or []
     clean_picks = []
+    seen_pick_pns: set[str] = set()
     if isinstance(raw_picks, list):
         for pick in raw_picks:
             if not isinstance(pick, dict):
@@ -1190,6 +1191,9 @@ def _parse_structured_response(raw: str, provided_products: list) -> Optional[di
             if valid_pns and pn not in valid_pns:
                 logger.warning(f"_parse_structured_response: dropped invented pick {pn}")
                 continue
+            if pn in seen_pick_pns:
+                continue
+            seen_pick_pns.add(pn)
             clean_picks.append({"part_number": pn, "reason": reason})
 
     return {
@@ -1229,6 +1233,15 @@ async def _handle_gpt(
     user_rep_id: Optional[str] = None,
 ) -> dict:
     """Handle intents that require GPT-4.1 reasoning."""
+
+    def _product_pn(p: dict) -> str:
+        return str(
+            p.get("Part_Number")
+            or p.get("Alt_Code")
+            or p.get("Supplier_Code")
+            or p.get("part_number")
+            or ""
+        ).strip().upper()
 
     # Fast-path: chemical check on a specific part number — skip GPT
     if intent == "chemical":
@@ -1341,6 +1354,19 @@ async def _handle_gpt(
     search_result = {"results": []}
     if search_query:
         search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+        # Compare hardening: never allow duplicate product rows by PN in the
+        # candidate context block. Duplicate candidates make the model return
+        # side-by-side comparisons against the same part on both sides.
+        if intent == "compare" and search_result.get("results"):
+            seen_compare_pns: set[str] = set()
+            unique_results: list[dict] = []
+            for p in search_result.get("results", []):
+                pn = _product_pn(p)
+                if not pn or pn in seen_compare_pns:
+                    continue
+                seen_compare_pns.add(pn)
+                unique_results.append(p)
+            search_result["results"] = unique_results
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
@@ -1442,6 +1468,36 @@ async def _handle_gpt(
                 structured = fallback_structured
 
         if structured:
+            # Compare hardening: ensure structured picks are distinct and try to
+            # provide at least two distinct picks when we have enough catalog
+            # candidates. This prevents "A vs A" outputs.
+            if intent == "compare":
+                picks = structured.get("picks") or []
+                deduped_picks: list[dict] = []
+                seen_pns: set[str] = set()
+                for pick in picks:
+                    pn = str(pick.get("part_number") or "").strip().upper()
+                    reason = str(pick.get("reason") or "").strip()
+                    if not pn or pn in seen_pns:
+                        continue
+                    seen_pns.add(pn)
+                    deduped_picks.append({"part_number": pn, "reason": reason})
+
+                if len(deduped_picks) < 2:
+                    for p in (search_result.get("results") or []):
+                        pn = _product_pn(p)
+                        if not pn or pn in seen_pns:
+                            continue
+                        seen_pns.add(pn)
+                        deduped_picks.append({
+                            "part_number": pn,
+                            "reason": "Comparable candidate from catalog results.",
+                        })
+                        if len(deduped_picks) >= 2:
+                            break
+
+                structured["picks"] = deduped_picks[:3]
+
             # Build the plain-text rendering for clients that don't render
             # structured fields (legacy callers, voice readback, fallback).
             plain = _structured_to_plain(structured)
