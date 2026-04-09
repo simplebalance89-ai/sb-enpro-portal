@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.12.1",
+    version="2.13.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -458,14 +458,19 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
         if pn:
             products_by_pn[str(pn).strip().upper()] = p
 
+    # V2.13: deleted the asyncio.sleep delays between chunks. They were
+    # added in V2.11 thinking they'd improve perceived streaming feel, but
+    # they actually ADDED ~1 second of dead air per response — the chunks
+    # were already pre-computed (full response from handle_message), so
+    # the sleeps just made the "fake" streaming visibly slow. Now chunks
+    # flush back-to-back as fast as the network can carry them, which is
+    # closer to real perceived-streaming UX. Real token streaming via
+    # Azure OpenAI stream=True is the next architectural step.
     if result.get("structured") and result.get("headline"):
-        # Structured path — stream chunks with small pauses
         yield _sse_event("headline", {"text": result["headline"]})
-        await asyncio.sleep(0.18)
 
         if result.get("body"):
             yield _sse_event("body", {"text": result["body"]})
-            await asyncio.sleep(0.22)
 
         rendered_pns: set = set()
         for pick in (result.get("picks") or []):
@@ -477,26 +482,21 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
                 "product": product,
             })
             rendered_pns.add(pn)
-            await asyncio.sleep(0.28)
 
-        # Other catalog options not covered by picks
         leftover = [
             p for p in (result.get("products") or [])
             if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
         ]
         if leftover:
             yield _sse_event("other", {"products": leftover[:3]})
-            await asyncio.sleep(0.18)
 
         if result.get("follow_up"):
             yield _sse_event("follow_up", {"text": result["follow_up"]})
-            await asyncio.sleep(0.10)
     else:
         # Legacy plain-text path
         yield _sse_event("body", {"text": result.get("response", "")})
         for p in (result.get("products") or [])[:5]:
             yield _sse_event("other", {"products": [p]})
-            await asyncio.sleep(0.10)
 
     # Terminal event
     yield _sse_event("done", {

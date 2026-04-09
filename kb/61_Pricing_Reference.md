@@ -119,15 +119,14 @@ Volume pricing available. Contact EnPro for quote.
 
 ---
 
-## 7. Lead Time Guidelines
+## 7. Lead Time
 
-| Product Type | Typical Lead Time |
-|--------------|-------------------|
-| In-Stock Items | 1-3 days |
-| Standard Cartridges | 1-2 weeks |
-| Special Order | 2-4 weeks |
-| Custom/Fabricated | 4-8 weeks |
-| Import (Alteco, etc.) | 4-6 weeks |
+We do NOT have lead time data in any system. NEVER estimate days, weeks,
+or windows for any product type. If a rep asks about lead times, the only
+valid response is:
+
+> "Lead times aren't in my data — reach out to service@enproinc.com or
+> 1 (800) 323-2416 and the office will pull the real number for you."
 
 ---
 

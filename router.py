@@ -267,7 +267,15 @@ Never say "Say lookup" or "type compare" or list commands. The user can just tal
 
 ## STOCK FIGURES
 
-Stock data uses warehouse columns: Houston General (Qty_Loc_10), Houston Reserve (Qty_Loc_22), Charlotte (Qty_Loc_12), Kansas City (Qty_Loc_30). Mention only locations where the quantity is greater than zero, and only when stock is relevant. Don't list zero-stock locations. If everything is zero: "Out of stock right now — I'd check with the office on lead time."
+Stock data uses warehouse columns: Houston General (Qty_Loc_10), Houston Reserve (Qty_Loc_22), Charlotte (Qty_Loc_12), Kansas City (Qty_Loc_30). Mention only locations where the quantity is greater than zero, and only when stock is relevant. Don't list zero-stock locations. If everything is zero, say plainly: "Out of stock right now — service@enproinc.com or 1 (800) 323-2416 for next steps."
+
+## LEAD TIMES — HARD RULE (no exceptions)
+
+We do NOT have lead time data anywhere in this system. NEVER quote, estimate, suggest, or imply any lead time, ETA, ship date, delivery window, or transit time. Not in days, not in weeks, not in ranges, not as "typical," not as "approximate." If a rep asks about lead times, respond exactly:
+
+> "Lead times aren't in my data — service@enproinc.com or 1 (800) 323-2416 will have the real number."
+
+This is non-negotiable. Lead time guesses end up on customer quotes.
 
 ## PRICE HANDLING
 
@@ -833,27 +841,84 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
         }
 
     elif intent == "compare":
-        # Split on "vs", "and", "versus", or comma to find individual parts
+        # V2.13 fix: extract shared modifiers (micron, product type, application,
+        # PSI/temp keywords) BEFORE splitting on "and"/"vs" so each side gets the
+        # full context. Without this, "compare 10 micron Pall and Graver hydraulic
+        # elements" splits into ["10 micron Pall", "Graver hydraulic elements"] —
+        # left side has no "element", right side has no "10 micron", and the search
+        # returns nonsense (e.g. a 10-micron Pall *disc* instead of an element).
         import re as _cmp_re
-        parts_to_compare = _cmp_re.split(r'\s+(?:vs\.?|versus|and|,)\s+', clean_msg, flags=_cmp_re.IGNORECASE)
+
+        # Pull shared modifiers out of the original query
+        shared_modifiers = []
+        # micron value
+        mic = _cmp_re.search(r"(\d+(?:\.\d+)?)\s*micron", clean_msg, flags=_cmp_re.IGNORECASE)
+        if mic:
+            shared_modifiers.append(f"{mic.group(1)} micron")
+        # product noun
+        for noun in ("element", "elements", "cartridge", "cartridges", "bag", "bags",
+                     "housing", "housings", "membrane", "membranes", "filter", "filters"):
+            if _cmp_re.search(rf"\b{noun}\b", clean_msg, flags=_cmp_re.IGNORECASE):
+                # singularize for cleaner search re-attachment
+                shared_modifiers.append(noun.rstrip("s"))
+                break
+        # application keywords
+        for app in ("hydraulic", "compressed air", "lube oil", "water treatment",
+                    "pharmaceutical", "chemical processing", "food and beverage", "HVAC"):
+            if _cmp_re.search(rf"\b{_cmp_re.escape(app)}\b", clean_msg, flags=_cmp_re.IGNORECASE):
+                shared_modifiers.append(app)
+                break
+        # media
+        for media in ("polypropylene", "PTFE", "glass fiber", "stainless steel", "PVDF", "nylon", "cellulose"):
+            if _cmp_re.search(rf"\b{_cmp_re.escape(media)}\b", clean_msg, flags=_cmp_re.IGNORECASE):
+                shared_modifiers.append(media)
+                break
+
+        # Strip the shared modifiers from clean_msg before splitting
+        stripped = clean_msg
+        for mod in shared_modifiers:
+            stripped = _cmp_re.sub(rf"\b{_cmp_re.escape(mod)}\b", "", stripped, flags=_cmp_re.IGNORECASE)
+        # Also strip the standalone "micron" if we captured the number
+        if mic:
+            stripped = _cmp_re.sub(r"\bmicron\b", "", stripped, flags=_cmp_re.IGNORECASE)
+
+        # Now split the residual on connectors
+        parts_to_compare = _cmp_re.split(r"\s+(?:vs\.?|versus|and|,)\s+", stripped, flags=_cmp_re.IGNORECASE)
         parts_to_compare = [p.strip() for p in parts_to_compare if p.strip()]
 
         products = []
-        if len(parts_to_compare) >= 2:
-            # Look up each part individually
+        if len(parts_to_compare) >= 2 and shared_modifiers:
+            # Re-attach the shared modifiers to each side and search with max_results=5,
+            # picking the first in-stock result that matches the product noun if possible.
+            shared_str = " ".join(shared_modifiers)
+            for side in parts_to_compare[:5]:
+                full_query = f"{side} {shared_str}".strip()
+                logger.info(f"compare side query: {full_query}")
+                sr = search_products(df, full_query, max_results=5)
+                results = sr.get("results", [])
+                if results:
+                    products.append(results[0])
+        elif len(parts_to_compare) >= 2:
+            # No shared modifiers — search each side as-is with max_results=5
             for part_query in parts_to_compare[:5]:
                 found = lookup_part(df, part_query)
                 if found:
                     products.append(found)
                 else:
-                    # Try search as fallback
-                    sr = search_products(df, part_query, max_results=1)
+                    sr = search_products(df, part_query, max_results=5)
                     if sr.get("results"):
                         products.append(sr["results"][0])
         else:
             # Fallback: search the whole string
             result = search_products(df, clean_msg, max_results=10)
             products = result.get("results", [])
+
+        # If we STILL don't have at least 2 products, fall through to GPT with
+        # the catalog data so the model can attempt the comparison conversationally
+        # instead of returning the broken "Only found 1 product" error message.
+        if len(products) < 2:
+            logger.info(f"compare path returned {len(products)} products — falling through to GPT")
+            return await _handle_gpt(message, "general", df, chemicals_df, history=None, advisory=None)
         if len(products) >= 2:
             # Build side-by-side comparison table
             spec_keys = ["Description", "Product_Type", "Final_Manufacturer", "Micron", "Media", "Max_Temp_F", "Max_PSI", "Flow_Rate", "Efficiency", "Price"]
@@ -1517,7 +1582,7 @@ def _format_product_response(product: dict) -> str:
         stock_parts = [f"{loc}: {qty}" for loc, qty in stock.items()]
         lines.append(f"{n}. **In Stock:** {', '.join(stock_parts)} (Total: {product.get('Total_Stock', 0)})")
     else:
-        lines.append(f"{n}. **Stock:** Out of stock — contact Enpro for lead time")
+        lines.append(f"{n}. **Stock:** Out of stock — service@enproinc.com or 1 (800) 323-2416")
     n += 1
 
     # Contextual numbered follow-ups (V5 style)

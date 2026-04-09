@@ -566,12 +566,32 @@
     function handleStreamEvent(eventName, data, summary) {
         switch (eventName) {
             case 'ready':
-                // Server is working — could show a typing dot here.
-                // setLoading already shows the typingIndicator so this
-                // is currently a no-op marker.
+                // V2.13: paint a skeleton so the user sees IMMEDIATE feedback
+                // before the first real token arrives. The skeleton is replaced
+                // when the headline event lands. Stops the "spinner-then-explosion"
+                // anti-pattern where the page sits blank then dumps everything at once.
+                appendMessage('bot',
+                    '<div class="fm-skeleton" style="display:flex;flex-direction:column;gap:8px;">' +
+                    '<div style="height:18px;width:75%;background:linear-gradient(90deg,#e8ecf2 25%,#f5f7fa 50%,#e8ecf2 75%);background-size:200% 100%;border-radius:4px;animation:fm-shimmer 1.4s infinite;"></div>' +
+                    '<div style="height:14px;width:90%;background:linear-gradient(90deg,#e8ecf2 25%,#f5f7fa 50%,#e8ecf2 75%);background-size:200% 100%;border-radius:4px;animation:fm-shimmer 1.4s infinite;"></div>' +
+                    '<div style="height:14px;width:60%;background:linear-gradient(90deg,#e8ecf2 25%,#f5f7fa 50%,#e8ecf2 75%);background-size:200% 100%;border-radius:4px;animation:fm-shimmer 1.4s infinite;"></div>' +
+                    '</div>' +
+                    '<style>@keyframes fm-shimmer{0%{background-position:200% 0;}100%{background-position:-200% 0;}}</style>'
+                );
+                window.__fmSkeletonShown = true;
+                scrollToBottom();
                 break;
 
             case 'headline':
+                // Remove the skeleton (if any) the moment real content lands
+                if (window.__fmSkeletonShown) {
+                    var skel = chatArea.querySelector('.fm-skeleton');
+                    if (skel) {
+                        var msgWrapper = skel.closest('.message') || skel.parentElement;
+                        if (msgWrapper) msgWrapper.remove();
+                    }
+                    window.__fmSkeletonShown = false;
+                }
                 if (data.text) {
                     appendMessage('bot',
                         '<div style="font-size:16px;font-weight:600;color:#0a1628;line-height:1.4;">' +
