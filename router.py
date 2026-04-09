@@ -1613,20 +1613,33 @@ async def _build_gpt_context(
         if direct_hits:
             search_result = {"results": direct_hits[:5]}
         else:
-            # Fast path 2 — voice extractor pipeline (the actual smart path)
-            try:
-                extracted = await _voice_extract_parameters(search_query)
-                if extracted:
-                    resolved = _voice_resolve_parameters(extracted)
-                    voice_result = _voice_query(df, resolved)
-                    if voice_result.get("results"):
-                        search_result = voice_result
-                        logger.info(
-                            f"voice extractor (chat): {len(voice_result['results'])} hits "
-                            f"via filters {voice_result.get('filters_applied', [])}"
-                        )
-            except Exception as ve:
-                logger.warning(f"voice extractor failed for chat query (non-fatal): {ve}")
+            # Fast path 2a — compare-aware multi-side voice extraction.
+            # V2.14.6: lifted from the V2.13 _handle_pandas compare branch
+            # but routes each per-side query through the voice extractor
+            # instead of fuzzy search_products. For "compare 10 micron Pall
+            # and Graver hydraulic elements" → splits to ["Pall hydraulic
+            # 10 micron element", "Graver hydraulic 10 micron element"] →
+            # voice_query each side → real Pall pick + real Graver pick.
+            compare_results = await _multi_side_voice_search(search_query, df)
+            if compare_results:
+                search_result = {"results": compare_results}
+                logger.info(f"compare-aware voice extractor: {len(compare_results)} sides resolved")
+
+            # Fast path 2b — single-query voice extractor pipeline
+            if not search_result.get("results"):
+                try:
+                    extracted = await _voice_extract_parameters(search_query)
+                    if extracted:
+                        resolved = _voice_resolve_parameters(extracted)
+                        voice_result = _voice_query(df, resolved)
+                        if voice_result.get("results"):
+                            search_result = voice_result
+                            logger.info(
+                                f"voice extractor (chat): {len(voice_result['results'])} hits "
+                                f"via filters {voice_result.get('filters_applied', [])}"
+                            )
+                except Exception as ve:
+                    logger.warning(f"voice extractor failed for chat query (non-fatal): {ve}")
 
             # Fallback — old fuzzy search_products with Phase 4 OR-fallback
             if not search_result.get("results"):
@@ -1678,6 +1691,123 @@ async def _build_gpt_context(
 _PICK_OBJECT_RE = _coref_re.compile(
     r'\{\s*"part_number"\s*:\s*"([^"]+)"\s*,\s*"reason"\s*:\s*"([^"]*)"\s*\}'
 )
+
+
+# V2.14.6 — compare-aware multi-side voice search. Lifted from V2.13's
+# _handle_pandas compare branch (same modifier-extraction regexes), but
+# instead of fuzzy search_products on each side, routes through the voice
+# extractor + voice_query for structured parameter resolution. Returns the
+# top product per side as a flat list, suitable for context injection.
+
+_COMPARE_TRIGGER_RE = _coref_re.compile(
+    r"^\s*(?:compare|vs|versus|difference between|pall vs|differ)",
+    _coref_re.IGNORECASE,
+)
+
+_COMPARE_SPLIT_RE = _coref_re.compile(
+    r"\s+(?:vs\.?|versus|and|,)\s+", _coref_re.IGNORECASE
+)
+
+_COMPARE_NOUNS = (
+    "element", "elements", "cartridge", "cartridges", "bag", "bags",
+    "housing", "housings", "membrane", "membranes", "filter", "filters",
+    "disc", "discs", "panel", "panels",
+)
+
+_COMPARE_APPS = (
+    "hydraulic", "compressed air", "lube oil", "water treatment",
+    "pharmaceutical", "chemical processing", "food and beverage",
+    "HVAC", "data center", "paint booth", "dust collection",
+)
+
+_COMPARE_MEDIA = (
+    "polypropylene", "PTFE", "glass fiber", "stainless steel",
+    "PVDF", "nylon", "cellulose", "pleated",
+)
+
+
+async def _multi_side_voice_search(message: str, df: pd.DataFrame) -> list[dict]:
+    """Detect compare-style queries and return one structured pick per side.
+
+    Returns [] if the message isn't a compare query OR if fewer than 2 sides
+    resolve. The caller (_build_gpt_context) treats a non-empty return as
+    the catalog injection block; an empty return means "fall through to
+    single-query voice extraction or search_products."
+    """
+    if not _COMPARE_TRIGGER_RE.search(message):
+        return []
+
+    # Strip leading "compare " / "compare the "
+    clean = _coref_re.sub(
+        r"^\s*compare(?:\s+the)?\s+", "", message, flags=_coref_re.IGNORECASE
+    ).strip()
+
+    # Pull shared modifiers (same logic as V2.13 _handle_pandas compare)
+    shared: list[str] = []
+
+    mic = _coref_re.search(
+        r"(\d+(?:\.\d+)?)\s*micron", clean, flags=_coref_re.IGNORECASE
+    )
+    if mic:
+        shared.append(f"{mic.group(1)} micron")
+
+    for noun in _COMPARE_NOUNS:
+        if _coref_re.search(rf"\b{noun}\b", clean, flags=_coref_re.IGNORECASE):
+            shared.append(noun.rstrip("s"))
+            break
+
+    for app in _COMPARE_APPS:
+        if _coref_re.search(rf"\b{_coref_re.escape(app)}\b", clean, flags=_coref_re.IGNORECASE):
+            shared.append(app)
+            break
+
+    for media in _COMPARE_MEDIA:
+        if _coref_re.search(rf"\b{_coref_re.escape(media)}\b", clean, flags=_coref_re.IGNORECASE):
+            shared.append(media)
+            break
+
+    # Strip the shared modifiers out before splitting on connectors
+    stripped = clean
+    for mod in shared:
+        stripped = _coref_re.sub(
+            rf"\b{_coref_re.escape(mod)}\b", "", stripped, flags=_coref_re.IGNORECASE
+        )
+    if mic:
+        stripped = _coref_re.sub(
+            r"\bmicron\b", "", stripped, flags=_coref_re.IGNORECASE
+        )
+
+    # Split residual on connectors (and / vs / versus / comma)
+    sides = [s.strip() for s in _COMPARE_SPLIT_RE.split(stripped) if s.strip()]
+    if len(sides) < 2:
+        return []
+
+    # Re-attach shared modifiers and run voice_query on each side
+    shared_str = " ".join(shared)
+    picks: list[dict] = []
+    seen_pns: set[str] = set()
+    for side in sides[:5]:
+        side_query = f"{side} {shared_str}".strip()
+        try:
+            extracted = await _voice_extract_parameters(side_query)
+            if not extracted:
+                continue
+            resolved = _voice_resolve_parameters(extracted)
+            vr = _voice_query(df, resolved)
+            results = vr.get("results") or []
+            if results:
+                top = results[0]
+                pn = str(top.get("Part_Number") or top.get("Alt_Code") or "").upper()
+                if pn and pn not in seen_pns:
+                    picks.append(top)
+                    seen_pns.add(pn)
+                    logger.info(f"compare side '{side_query}' → {pn}")
+        except Exception as e:
+            logger.warning(f"compare side voice extraction failed for '{side_query}': {e}")
+            continue
+
+    # Need at least 2 sides resolved for compare to be meaningful
+    return picks if len(picks) >= 2 else []
 
 
 async def _handle_gpt_stream(
