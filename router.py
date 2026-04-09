@@ -14,6 +14,15 @@ import pandas as pd
 from typing import AsyncIterator
 
 from azure_client import route_message, reason, reason_stream
+# V2.14.5 — chat path borrows voice's gpt-4.1-mini intent extraction +
+# resolved-param structured catalog query. Same pipeline voice has been
+# using all along. Voice was always smarter than chat for natural-language
+# queries; this stops chat from being the dumb sibling.
+from voice_search import (
+    extract_parameters as _voice_extract_parameters,
+    resolve_parameters as _voice_resolve_parameters,
+    voice_query as _voice_query,
+)
 from search import search_products, lookup_part, format_product, STOCK_LOCATIONS
 from governance import run_pre_checks, run_post_check, sanitize_response
 
@@ -1563,19 +1572,36 @@ async def _build_gpt_context(
         except Exception as ci_err:
             logger.error(f"customer_intel fetch failed (non-fatal): {ci_err}")
 
-    # Direct token lookup FIRST — catches part numbers buried in conversational
-    # language (e.g. "look up CLR130", "do you have HC9600 in stock"). Iterates
-    # the cleaned query tokens; any token that's a valid part-number / alt-code
-    # / supplier-code in the catalog gets injected as a direct hit. Falls back
-    # to fuzzy search_products() only if no direct hits were found. This is
-    # the V2.14 replacement for the dead _handle_pandas lookup branch.
+    # V2.14.5 — CHAT NOW USES THE VOICE EXTRACTOR PIPELINE.
+    #
+    # The same gpt-4.1-mini intent extraction + fuzzy parameter resolution +
+    # structured DataFrame query that voice_search has been using all along.
+    # Voice was always finding products that chat couldn't reach because
+    # voice translates English into structured catalog params before
+    # querying ("compare 10 micron Pall and Graver hydraulic" → manufacturer:
+    # Pall, micron: 10) instead of fuzzy-substring-matching the raw sentence.
+    #
+    # Pipeline (mirrors voice_search_pipeline):
+    #   1. extract_parameters(message)  → gpt-4.1-mini → structured dict
+    #   2. resolve_parameters(params)   → fuzzy-resolve to canonical catalog
+    #                                     vocabulary (rapidfuzz + metaphone)
+    #   3. voice_query(df, resolved)    → DataFrame filter, with built-in
+    #                                     filter relaxation if zero matches
+    #                                     and in-stock preference
+    #
+    # Falls through to the old direct-token + search_products path only if
+    # the voice extractor returns nothing useful (e.g. governance-only
+    # message, demo intent, empty extraction). Direct token lookup is still
+    # tried first for messages that look like a bare part number, since
+    # that's faster than a GPT round-trip and never wrong.
     search_result: dict = {"results": []}
+
     if search_query:
+        # Fast path 1 — bare part-number lookup (no GPT round-trip needed)
         direct_hits: list = []
         seen_pns: set = set()
         for raw_tok in search_query.split():
             tok = raw_tok.strip(",.?!()[]{}\"'")
-            # Skip pure connector words (too short OR no digits AND too short)
             if len(tok) < 3:
                 continue
             product = lookup_part(df, tok)
@@ -1587,7 +1613,25 @@ async def _build_gpt_context(
         if direct_hits:
             search_result = {"results": direct_hits[:5]}
         else:
-            search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+            # Fast path 2 — voice extractor pipeline (the actual smart path)
+            try:
+                extracted = await _voice_extract_parameters(search_query)
+                if extracted:
+                    resolved = _voice_resolve_parameters(extracted)
+                    voice_result = _voice_query(df, resolved)
+                    if voice_result.get("results"):
+                        search_result = voice_result
+                        logger.info(
+                            f"voice extractor (chat): {len(voice_result['results'])} hits "
+                            f"via filters {voice_result.get('filters_applied', [])}"
+                        )
+            except Exception as ve:
+                logger.warning(f"voice extractor failed for chat query (non-fatal): {ve}")
+
+            # Fallback — old fuzzy search_products with Phase 4 OR-fallback
+            if not search_result.get("results"):
+                search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")

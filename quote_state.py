@@ -345,11 +345,29 @@ def _extract_part_and_specs(state: dict[str, Any], text: str, df: pd.DataFrame) 
 
 
 def _find_part_candidates(text: str, df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Extract part-number-shaped tokens from the user message and resolve
+    each one against the catalog. V2.14.5 — added strict shape filtering
+    to stop bare English words like 'HVAC', 'data', 'center', 'meeting'
+    from being lookup_part'd against the catalog and silently inserting
+    junk line items (the 'Box with Return Label' leak).
+
+    A token is considered part-number-shaped only if it contains BOTH at
+    least one letter AND at least one digit (most real part numbers do —
+    HC9020, CLR130, EPE-10-5, 200190-000001, etc.). Pure-alpha tokens
+    like 'HVAC' or 'meeting' are skipped here. Pure-digit tokens like
+    '1000' (years, quantities) are also skipped — those are best
+    handled by the structured spec extractor in voice_query.
+    """
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     tokens = re.findall(r"[A-Za-z0-9/\-]{4,}", text)
     for token in tokens:
+        # Require BOTH a letter and a digit — skip pure words and pure numbers
+        has_letter = any(c.isalpha() for c in token)
+        has_digit = any(c.isdigit() for c in token)
+        if not (has_letter and has_digit):
+            continue
         product = lookup_part(df, token)
         if product and product.get("Part_Number") not in seen:
             seen.add(product["Part_Number"])
