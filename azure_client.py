@@ -109,19 +109,34 @@ async def reason(
     messages: list[dict],
     temperature: float = 0.3,
     max_tokens: int = 2048,
+    deployment_override: Optional[str] = None,
 ) -> str:
     """
-    Full reasoning via gpt-4.1 deployment.
+    Full reasoning via primary/fallback Azure deployment.
     Returns the raw text content of the response.
     """
     full_messages = [{"role": "system", "content": system_prompt}] + messages
-    data = await chat_completion(
-        deployment=settings.AZURE_DEPLOYMENT_REASONING,
-        messages=full_messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return data["choices"][0]["message"]["content"].strip()
+    primary = deployment_override or settings.AZURE_DEPLOYMENT_REASONING
+    fallback = settings.AZURE_DEPLOYMENT_REASONING_FALLBACK
+    try:
+        data = await chat_completion(
+            deployment=primary,
+            messages=full_messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        if fallback and fallback != primary and deployment_override is None:
+            logger.warning(f"Reasoning primary failed ({primary}), retrying fallback ({fallback}): {e}")
+            data = await chat_completion(
+                deployment=fallback,
+                messages=full_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return data["choices"][0]["message"]["content"].strip()
+        raise
 
 
 async def health_check() -> dict:

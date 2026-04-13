@@ -21,6 +21,37 @@ from search import search_products, format_product, _to_float
 logger = logging.getLogger("enpro.voice_search")
 
 
+def _near_part_matches(df: pd.DataFrame, token: str, max_results: int = 3) -> list[dict]:
+    """
+    Return nearest in-catalog matches for a part-like token.
+    Used to avoid dead-end "not found" responses on minor PN variation.
+    """
+    from search import suggest_parts, lookup_part
+
+    if not token:
+        return []
+
+    normalized = re.sub(r"[^A-Za-z0-9]", "", str(token)).upper()
+    if len(normalized) < 2:
+        return []
+
+    suggestions = suggest_parts(df, normalized, max_results=max_results, mode="contains")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for s in suggestions:
+        pn = str(s.get("Part_Number") or "").strip()
+        if not pn:
+            continue
+        upn = pn.upper()
+        if upn in seen:
+            continue
+        seen.add(upn)
+        p = lookup_part(df, pn)
+        if p:
+            out.append(p)
+    return out[:max_results]
+
+
 # ---------------------------------------------------------------------------
 # Synonym Table — maps voice artifacts & shorthand to canonical catalog terms
 # ---------------------------------------------------------------------------
@@ -248,19 +279,73 @@ def preprocess_transcript(text: str) -> str:
     return lower
 
 
+def _canonicalize_part_number(raw: str) -> str:
+    """Normalize a part-like token for catalog lookup (alnum only, uppercase)."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
+
+
+def _extract_explicit_part_phrase(text: str) -> Optional[str]:
+    """
+    Extract likely part token from explicit phrasing:
+    - "part number CLR 510"
+    - "look up part CLR-510"
+    - "pn C L R 5 1 0"
+    """
+    if not text:
+        return None
+    lower = str(text).lower()
+    # Capture text after explicit markers up to punctuation boundary.
+    m = re.search(r"\b(?:part\s*number|part\s*#|pn|part)\b[:\s-]*(.+?)(?:[.,;!?]|$)", lower)
+    if not m:
+        return None
+    tail = m.group(1).strip()
+    if not tail:
+        return None
+
+    # Keep only first few "code-like" chunks to avoid swallowing full sentences.
+    chunks = re.findall(r"[a-z0-9]+", tail)
+    if not chunks:
+        return None
+    candidate = "".join(chunks[:6])  # enough for spaced letters/digits
+    pn = _canonicalize_part_number(candidate)
+    # Require a mixed or code-like token length to avoid false positives.
+    if len(pn) >= 4 and any(c.isdigit() for c in pn):
+        return pn
+    return None
+
+
 def detect_part_number(text: str) -> Optional[str]:
-    """Detect part number patterns in transcript."""
-    # Common patterns: CLR510, AB-1234-56, 12345-6789, alphanumeric codes
+    """Detect part number patterns in transcript.
+
+    Handles both compact forms (CLR510, HC9021FAS4Z) and spoken split forms
+    like "CLR 510" that often come from STT.
+    """
+    # 1) Compact code-like patterns
     patterns = [
-        r'\b[A-Z]{2,5}\d{3,}[A-Z0-9]*\b',  # CLR510, ABC1234
-        r'\b\d{4,}-\d{3,}\b',                # 12345-6789
-        r'\b[A-Z]{1,3}-\d{3,}-\d+\b',        # AB-1234-56
-        r'\b\d{6,}\b',                        # 123456 (6+ digits alone)
+        r"\b[A-Z]{2,5}\d{3,}[A-Z0-9]*\b",   # CLR510, HC9021FAS4Z
+        r"\b\d{4,}-\d{3,}\b",               # 12345-6789
+        r"\b[A-Z]{1,3}-\d{3,}-\d+\b",       # AB-1234-56
+        r"\b\d{6,}\b",                      # 123456 (6+ digits alone)
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(0)
+            pn = _canonicalize_part_number(match.group(0))
+            if pn:
+                return pn
+
+    # 2) Spoken split form: "CLR 510" -> CLR510
+    split_match = re.search(r"\b([A-Z]{2,5})\s+(\d{2,}[A-Z0-9]*)\b", text, re.IGNORECASE)
+    if split_match:
+        pn = _canonicalize_part_number(split_match.group(1) + split_match.group(2))
+        if pn:
+            return pn
+
+    # 3) Explicit phrase fallback (part number / pn / part)
+    explicit = _extract_explicit_part_phrase(text)
+    if explicit:
+        return explicit
+
     return None
 
 
@@ -836,8 +921,24 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
     # Step 2: Fast path — direct part number detection
     part_num = detect_part_number(cleaned)
     if part_num:
-        from search import lookup_part
+        from search import lookup_part, suggest_parts
         product = lookup_part(df, part_num)
+        # Deterministic rescue for spoken/truncated part numbers.
+        # Example: "CLR 510" / "CLR510" should resolve to "CLR510/T1210000000".
+        if not product:
+            try:
+                starts = suggest_parts(df, part_num, max_results=3, mode="starts_with")
+            except Exception:
+                starts = []
+            for cand in starts:
+                cand_pn = str(cand.get("Part_Number") or "").strip()
+                if not cand_pn:
+                    continue
+                resolved = lookup_part(df, cand_pn)
+                if resolved:
+                    product = resolved
+                    part_num = cand_pn
+                    break
         if product:
             return {
                 "results": [product],
@@ -851,17 +952,27 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
             }
         # Part number detected but not found — don't fall back to text search
         # (prevents hallucinations where "FAKE12345" matches random products)
-        if len(cleaned.split()) <= 2:
-            return {
-                "results": [],
-                "total_found": 0,
-                "transcript": transcript,
-                "cleaned_transcript": cleaned,
-                "search_type": "voice_part_not_found",
-                "overall_confidence": 0.0,
-                "suggestions": [],
-                "filters_applied": [f"part_number={part_num}(not_found)"],
+        near = _near_part_matches(df, part_num, max_results=3)
+        recs = [
+            {
+                "part_number": str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper(),
+                "reason": "Closest catalog part-number match."
             }
+            for p in near
+            if (p.get("Part_Number") or p.get("Alt_Code"))
+        ]
+        return {
+            "results": near,
+            "total_found": len(near),
+            "transcript": transcript,
+            "cleaned_transcript": cleaned,
+            "search_type": "voice_part_near_match" if near else "voice_part_not_found",
+            "overall_confidence": 0.35 if near else 0.0,
+            "suggestions": [],
+            "filters_applied": [f"part_number={part_num}(not_found)"],
+            "recommendations": recs,
+            "not_found_part_number": part_num,
+        }
 
     # Step 3: Extract parameters
     params = await extract_parameters(cleaned)
@@ -878,11 +989,13 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
     # Step 3b: Strip part_number from params if it doesn't exist in catalog
     # (prevents hallucinations — "FAKE12345 10 micron" would otherwise match on specs alone)
     _had_fake_pn = False
+    _missing_pn = None
     if params.get("part_number"):
         from search import lookup_part as _lp
         if not _lp(df, params["part_number"]):
             logger.info(f"Voice search — stripped non-existent part_number: {params['part_number']}")
             _had_fake_pn = True
+            _missing_pn = str(params["part_number"])
             del params["part_number"]
             # PURITY: when the user explicitly asked for a specific part
             # number that doesn't exist, do NOT substitute spec-based
@@ -890,17 +1003,28 @@ async def voice_search_pipeline(transcript: str, df: pd.DataFrame) -> dict:
             # empty + a clear "no such part" signal so the UI can ask
             # the user to confirm the part number rather than handing
             # them random products that happen to share a micron rating.
+            near = _near_part_matches(df, _missing_pn or "", max_results=3)
+            recs = [
+                {
+                    "part_number": str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper(),
+                    "reason": "Closest catalog part-number match."
+                }
+                for p in near
+                if (p.get("Part_Number") or p.get("Alt_Code"))
+            ]
             return {
-                "results": [],
-                "total_found": 0,
+                "results": near,
+                "total_found": len(near),
                 "transcript": transcript,
                 "cleaned_transcript": cleaned,
-                "search_type": "voice_part_not_found",
-                "overall_confidence": 0.0,
+                "search_type": "voice_part_near_match" if near else "voice_part_not_found",
+                "overall_confidence": 0.35 if near else 0.0,
                 "suggestions": [],
                 "filters_applied": [],
                 "raw_params": params,
                 "fake_part_number": True,
+                "recommendations": recs,
+                "not_found_part_number": _missing_pn,
             }
 
     # Step 4: Fuzzy resolve

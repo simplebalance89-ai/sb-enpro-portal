@@ -12,6 +12,7 @@ from typing import Optional
 import pandas as pd
 
 from azure_client import route_message, reason
+from config import settings
 from search import search_products, lookup_part, format_product, STOCK_LOCATIONS
 from governance import run_pre_checks, run_post_check, sanitize_response
 
@@ -354,7 +355,7 @@ Second paragraph — give them ONE specific product recommendation pulled from t
 
 - Only cite products from the [RELEVANT PRODUCTS FROM CATALOG] data attached to the user message.
 - Only cite application knowledge from the [KB SECTION CONTEXT] when present, and speak it plainly — never show section numbers, file names, or "KB" labels.
-- If you have no good catalog match for this customer, say so honestly: "I don't have a strong fit in catalog for that specific profile — I'd flag it to the office before the meeting (service@enproinc.com)."
+- If exact application tags are sparse (example: HVAC/data-center phrasing), recommend the closest in-catalog functional fits (media/form-factor/service-life) and state what to confirm in the meeting. Only hand off to office/engineering when safety constraints require it.
 - No numbered lists. No bullets. No "Customer Focus:", "Lead Product:", "Watch Out:" headers. Plain prose only — this is a phone-screen prep, not a deliverable.
 - Hard escalations (>400°F, >150 PSI, H2S, hydrogen, sub-0.2 micron, etc.) → tell the rep to loop in engineering before the meeting, not to recommend anything yourself.
 - Keep it to roughly 4–8 sentences total.
@@ -436,24 +437,12 @@ QUOTE_READY_RESPONSE = """Great — I'll put together a formal quote. To finaliz
 
 Once I have those details, I'll generate a formal quotation. Your Enpro rep will follow up within 1 business day."""
 
-HELP_RESPONSE = """Enpro Filtration Mastermind — Commands:
-
-1. lookup [part] — Search by part number, supplier code, or alt code
-2. price [part] — Pricing for a specific product
-3. compare [parts] — Side-by-side comparison
-4. manufacturer [name] — List products by manufacturer
-5. chemical [name] — Chemical compatibility with A/B/C/D ratings
-6. pregame [customer/industry] — Meeting prep with KB expertise
-7. application [problem] — Match problem to filtration solution
-8. system quote [specs] — Complete system quote
-9. quote ready — Selection form checklist
-10. demo — Full walkthrough with real data
-11. demo guided — Step-by-step interactive training
-12. mic drop — Complete workflow demonstration
-13. help — This command list
-14. reset — Clear context, fresh start
-
-Contact: service@enproinc.com | 1 (800) 323-2416"""
+HELP_RESPONSE = (
+    "I'm your filtration colleague — ask naturally and I'll handle the intent. "
+    "I can help with part lookups, customer pregame prep, comparisons, chemical compatibility, "
+    "application guidance, and quote-ready next steps. "
+    "If we need office backup: service@enproinc.com or 1 (800) 323-2416."
+)
 
 RESET_RESPONSE = "Context cleared. Fresh start. How can I help you with filtration?"
 
@@ -545,6 +534,8 @@ KB_SECTION_MAP = {
     "cip": ("8.1", "Culinary Steam + certifications", "3-A sanitary, 3-A 609-03"),
     "municipal": ("8.3", "Water Treatment & Municipal", "Ultipleat, Marksman — NSF 61 MANDATORY"),
     "water treatment": ("8.3", "Water Treatment & Municipal", "Ultipleat, Marksman — NSF 61 MANDATORY"),
+    "data center": ("12.1", "Data Center HVAC", "multi-pleat, extended surface, rigid cell, MERV 13"),
+    "hvac": ("12.1", "Data Center HVAC", "multi-pleat, extended surface, rigid cell, MERV 13"),
     "whisky": ("8.4", "Whisky Depth Filtration", "Seitz-K depth filters"),
     "spirits": ("8.4", "Whisky Depth Filtration", "Seitz-K depth filters"),
     "turbine": ("9.1", "Alliant Case Study", "Ultipleat HF, EPRI hold points"),
@@ -747,6 +738,11 @@ async def handle_message(
     if intent in GOVERNANCE_INTENTS:
         return await _handle_governance(message, intent)
 
+    # Compare should render through the conversational JSON path, not the
+    # legacy markdown table path.
+    if intent == "compare":
+        return await _handle_gpt(message, "compare", df, chemicals_df, history, advisory, user_rep_id=user_rep_id)
+
     if intent in PANDAS_INTENTS:
         return await _handle_pandas(message, intent, df)
 
@@ -905,6 +901,20 @@ async def _handle_pandas(message: str, intent: str, df: pd.DataFrame) -> dict:
                 if found:
                     products.append(found)
                 else:
+                    # Deterministic PN shorthand rescue:
+                    # "HC9020" should resolve to "HC9020FCN4Z" when present.
+                    try:
+                        from search import suggest_parts as _suggest_parts
+                        starts = _suggest_parts(df, part_query, max_results=3, mode="starts_with")
+                    except Exception:
+                        starts = []
+                    if starts:
+                        cand_pn = str(starts[0].get("Part_Number") or "").strip()
+                        if cand_pn:
+                            resolved = lookup_part(df, cand_pn)
+                            if resolved:
+                                products.append(resolved)
+                                continue
                     sr = search_products(df, part_query, max_results=5)
                     if sr.get("results"):
                         products.append(sr["results"][0])
@@ -1169,6 +1179,7 @@ def _parse_structured_response(raw: str, provided_products: list) -> Optional[di
     # Filter picks: drop any pick whose part_number isn't in the catalog
     raw_picks = parsed.get("picks") or []
     clean_picks = []
+    seen_pick_pns: set[str] = set()
     if isinstance(raw_picks, list):
         for pick in raw_picks:
             if not isinstance(pick, dict):
@@ -1180,6 +1191,9 @@ def _parse_structured_response(raw: str, provided_products: list) -> Optional[di
             if valid_pns and pn not in valid_pns:
                 logger.warning(f"_parse_structured_response: dropped invented pick {pn}")
                 continue
+            if pn in seen_pick_pns:
+                continue
+            seen_pick_pns.add(pn)
             clean_picks.append({"part_number": pn, "reason": reason})
 
     return {
@@ -1220,6 +1234,15 @@ async def _handle_gpt(
 ) -> dict:
     """Handle intents that require GPT-4.1 reasoning."""
 
+    def _product_pn(p: dict) -> str:
+        return str(
+            p.get("Part_Number")
+            or p.get("Alt_Code")
+            or p.get("Supplier_Code")
+            or p.get("part_number")
+            or ""
+        ).strip().upper()
+
     # Fast-path: chemical check on a specific part number — skip GPT
     if intent == "chemical":
         chem_fast = _try_chemical_fast_path(message, df, chemicals_df)
@@ -1259,12 +1282,15 @@ async def _handle_gpt(
 
     # Search for relevant products to include as context
     # For pregame/application: search using KB-recommended products, not raw message
+    has_catalog_context = False
     search_query = message
     if intent in ("pregame", "application"):
         # Extract recommended product names from KB map
         msg_lower = message.lower()
+        kb_matched = False
         for keyword, (section, title, products) in KB_SECTION_MAP.items():
             if keyword in msg_lower:
+                kb_matched = True
                 # Search for the first recommended product name
                 product_names = [p.strip() for p in products.split(",")]
                 all_results = []
@@ -1275,7 +1301,8 @@ async def _handle_gpt(
                 if all_results:
                     products_context = json.dumps(all_results[:5], indent=2, default=str)
                     context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
-                search_query = None  # Skip the default search below
+                    has_catalog_context = True
+                    search_query = None  # Skip default search only when we already have context products
                 break
 
     # Coreference support — inject the most recent non-empty prior-turn
@@ -1327,8 +1354,48 @@ async def _handle_gpt(
     search_result = {"results": []}
     if search_query:
         search_result = search_products(df, search_query, max_results=5, in_stock_only=False)
+        # Compare hardening: never allow duplicate product rows by PN in the
+        # candidate context block. Duplicate candidates make the model return
+        # side-by-side comparisons against the same part on both sides.
+        if intent == "compare" and search_result.get("results"):
+            seen_compare_pns: set[str] = set()
+            unique_results: list[dict] = []
+            for p in search_result.get("results", []):
+                pn = _product_pn(p)
+                if not pn or pn in seen_compare_pns:
+                    continue
+                seen_compare_pns.add(pn)
+                unique_results.append(p)
+            search_result["results"] = unique_results
         if search_result.get("results"):
             products_context = json.dumps(search_result["results"], indent=2, default=str)
+            context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
+            has_catalog_context = True
+
+    # Pregame/application fallback: when exact phrasing is sparse (especially HVAC/data-center),
+    # broaden with function-oriented terms so GPT gets at least a few grounded options.
+    if intent in ("pregame", "application") and not has_catalog_context:
+        msg_lower = message.lower()
+        fallback_terms = []
+        if "data center" in msg_lower or "hvac" in msg_lower:
+            fallback_terms.extend(["merv", "pleat", "extended surface", "rigid"])
+        fallback_terms.extend(["filter", "cartridge"])
+
+        fallback_results = []
+        seen_pn = set()
+        for term in fallback_terms:
+            sr = search_products(df, term, max_results=3, in_stock_only=False)
+            for p in (sr.get("results") or []):
+                pn = str(p.get("Part_Number") or p.get("Alt_Code") or "").strip().upper()
+                if not pn or pn in seen_pn:
+                    continue
+                seen_pn.add(pn)
+                fallback_results.append(p)
+            if len(fallback_results) >= 5:
+                break
+
+        if fallback_results:
+            products_context = json.dumps(fallback_results[:5], indent=2, default=str)
             context_parts.append(f"[RELEVANT PRODUCTS FROM CATALOG]:\n{products_context}")
 
     # Anti-hallucination guardrail — force GPT to only use provided data
@@ -1380,7 +1447,57 @@ async def _handle_gpt(
         # the user always gets *something* — never a 500.
         structured = _parse_structured_response(response, search_result.get("results", []))
 
+        # Optional model fallback: if primary reasoning answered but failed the
+        # required structured contract, retry once on fallback deployment.
+        fallback_deployment = settings.AZURE_DEPLOYMENT_REASONING_FALLBACK
+        if not structured and fallback_deployment and fallback_deployment != settings.AZURE_DEPLOYMENT_REASONING:
+            logger.warning(
+                f"Structured parse failed on primary ({settings.AZURE_DEPLOYMENT_REASONING}); "
+                f"retrying fallback ({fallback_deployment})"
+            )
+            fallback_response = await reason(
+                system_prompt,
+                messages,
+                deployment_override=fallback_deployment,
+            )
+            fallback_structured = _parse_structured_response(
+                fallback_response, search_result.get("results", [])
+            )
+            if fallback_structured:
+                response = fallback_response
+                structured = fallback_structured
+
         if structured:
+            # Compare hardening: ensure structured picks are distinct and try to
+            # provide at least two distinct picks when we have enough catalog
+            # candidates. This prevents "A vs A" outputs.
+            if intent == "compare":
+                picks = structured.get("picks") or []
+                deduped_picks: list[dict] = []
+                seen_pns: set[str] = set()
+                for pick in picks:
+                    pn = str(pick.get("part_number") or "").strip().upper()
+                    reason = str(pick.get("reason") or "").strip()
+                    if not pn or pn in seen_pns:
+                        continue
+                    seen_pns.add(pn)
+                    deduped_picks.append({"part_number": pn, "reason": reason})
+
+                if len(deduped_picks) < 2:
+                    for p in (search_result.get("results") or []):
+                        pn = _product_pn(p)
+                        if not pn or pn in seen_pns:
+                            continue
+                        seen_pns.add(pn)
+                        deduped_picks.append({
+                            "part_number": pn,
+                            "reason": "Comparable candidate from catalog results.",
+                        })
+                        if len(deduped_picks) >= 2:
+                            break
+
+                structured["picks"] = deduped_picks[:3]
+
             # Build the plain-text rendering for clients that don't render
             # structured fields (legacy callers, voice readback, fallback).
             plain = _structured_to_plain(structured)
@@ -1422,6 +1539,27 @@ async def _handle_gpt(
         }
     except Exception as e:
         logger.error(f"GPT reasoning failed: {e}")
+        # Resilience fallback: if reasoning is down, keep core workflows alive
+        # with deterministic Pandas/catalog behavior instead of hard-failing.
+        if intent == "compare":
+            try:
+                logger.warning("Falling back to deterministic compare path (Pandas) because reasoning is unavailable")
+                return await _handle_pandas(message, "compare", df)
+            except Exception as compare_err:
+                logger.error(f"Deterministic compare fallback also failed: {compare_err}")
+
+        if search_result.get("results"):
+            return {
+                "response": (
+                    _format_search_response(search_result)
+                    + "\n\n(Reasoning engine is temporarily unavailable. Showing direct catalog results.)"
+                ),
+                "intent": intent,
+                "cost": "$0",
+                "products": search_result.get("results", []),
+                "structured": False,
+            }
+
         return {
             "response": (
                 "I'm having trouble connecting to my reasoning engine right now. "

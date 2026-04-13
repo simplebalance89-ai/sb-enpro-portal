@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Enpro Filtration Mastermind Portal",
-    version="2.13.0",
+    version="2.15.0",
     description="AI-powered filtration product search, recommendation, and quote engine.",
     lifespan=lifespan,
 )
@@ -473,7 +473,7 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
             yield _sse_event("body", {"text": result["body"]})
 
         rendered_pns: set = set()
-        for pick in (result.get("picks") or []):
+        for pick in (result.get("picks") or [])[:3]:
             pn = str(pick.get("part_number") or "").strip().upper()
             product = products_by_pn.get(pn)
             yield _sse_event("pick", {
@@ -482,13 +482,6 @@ async def _chat_stream_generator(request: Request, req: ChatRequest):
                 "product": product,
             })
             rendered_pns.add(pn)
-
-        leftover = [
-            p for p in (result.get("products") or [])
-            if str((p.get("Part_Number") or p.get("Alt_Code") or "")).strip().upper() not in rendered_pns
-        ]
-        if leftover:
-            yield _sse_event("other", {"products": leftover[:3]})
 
         if result.get("follow_up"):
             yield _sse_event("follow_up", {"text": result["follow_up"]})
